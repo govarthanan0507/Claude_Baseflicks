@@ -1,0 +1,165 @@
+* {
+    box-sizing: border-box;
+}
+
+
+body {
+    margin: 0;
+
+    background: #111;
+
+    color: white;
+
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+}
+
+
+.header {
+    padding: 24px 40px;
+
+    font-size: 30px;
+
+    font-weight: bold;
+
+    position: sticky;
+
+    top: 0;
+
+    background: #111;
+
+    z-index: 10;
+}
+
+
+.content {
+    padding: 10px 40px 50px;
+}
+
+
+.video-section {
+    margin-bottom: 45px;
+}
+
+
+.folder-title {
+    margin: 0 0 18px;
+
+    font-size: 24px;
+
+    font-weight: 600;
+}
+
+
+.video-grid {
+    display: grid;
+
+    grid-template-columns:
+        repeat(
+            auto-fill,
+            minmax(220px, 1fr)
+        );
+
+    gap: 24px;
+}
+
+
+.video-card {
+    background: #1c1c1c;
+
+    border-radius: 8px;
+
+    overflow: hidden;
+
+    cursor: pointer;
+
+    transition:
+        transform 0.2s ease,
+        box-shadow 0.2s ease;
+}
+
+
+.video-card:hover {
+
+    transform: scale(1.04);
+
+    box-shadow:
+        0 10px 30px
+        rgba(0, 0, 0, 0.5);
+
+}
+
+
+.video-preview {
+    width: 100%;
+
+    aspect-ratio: 16 / 9;
+
+    object-fit: cover;
+
+    display: block;
+
+    background: #2a2a2a;
+}
+
+
+.video-title {
+    padding: 14px;
+
+    font-size: 16px;
+
+    white-space: nowrap;
+
+    overflow: hidden;
+
+    text-overflow: ellipsis;
+}
+
+
+/*
+    Smaller cards on phones
+*/
+
+@media (max-width: 600px) {
+
+    .header {
+        padding: 18px 20px;
+
+        font-size: 24px;
+    }
+
+
+    .content {
+        padding:
+            10px
+            20px
+            40px;
+    }
+
+
+    .video-grid {
+
+        grid-template-columns:
+            repeat(
+                2,
+                1fr
+            );
+
+        gap: 12px;
+    }
+
+
+    .folder-title {
+        font-size: 20px;
+    }
+
+
+    .video-title {
+        padding: 10px;
+
+        font-size: 14px;
+    }
+
+}

@@ -1,0 +1,7 @@
+node_modules/
+videos/
+baseflix.db
+posters/
+*.db
+*.db-shm
+*.db-wal
