@@ -9,6 +9,7 @@ const app = express();
 
 app.use(express.json());
 
+
 // ============================================================
 // BASEFLIX WELCOME PAGE
 // ============================================================
@@ -24,6 +25,7 @@ app.get("/", (req, res) => {
     );
 
 });
+
 
 // ============================================================
 // PUBLIC FILES
@@ -80,6 +82,7 @@ app.get("/api/videos", (req, res) => {
 
 });
 
+
 // ============================================================
 // PROFILE API
 // ============================================================
@@ -119,7 +122,8 @@ app.get("/api/profiles", (req, res) => {
         res
             .status(500)
             .json({
-                error: "Could not load profiles"
+                error:
+                    "Could not load profiles"
             });
 
     }
@@ -200,6 +204,413 @@ app.get(
                 .json({
                     error:
                         "Could not load profile"
+                });
+
+        }
+
+    }
+);
+
+
+// ============================================================
+// CONTINUE WATCHING API
+// ============================================================
+
+
+// ============================================================
+// GET CONTINUE WATCHING
+// ============================================================
+
+app.get(
+    "/api/continue-watching/:profileId",
+    (req, res) => {
+
+        try {
+
+            const profileId =
+                Number(
+                    req.params.profileId
+                );
+
+
+            if (
+                !Number.isInteger(
+                    profileId
+                )
+            ) {
+
+                return res
+                    .status(400)
+                    .json({
+                        error:
+                            "Invalid profile ID"
+                    });
+
+            }
+
+
+            const results =
+                db.prepare(`
+                    SELECT
+
+                        cw.id,
+
+                        cw.profile_id,
+
+                        cw.video_id,
+
+                        cw.position,
+
+                        cw.duration,
+
+                        cw.updated_at,
+
+                        v.name,
+
+                        v.relative_path,
+
+                        v.folder,
+
+                        v.size
+
+                    FROM continue_watching cw
+
+                    INNER JOIN videos v
+                        ON v.id = cw.video_id
+
+                    WHERE cw.profile_id = ?
+
+                    AND cw.position > 5
+
+                    AND cw.duration > 0
+
+                    AND cw.position <
+                        cw.duration - 10
+
+                    ORDER BY
+                        cw.updated_at DESC
+
+                    LIMIT 10
+                `).all(
+                    profileId
+                );
+
+
+            res.json(
+                results
+            );
+
+        }
+
+        catch (error) {
+
+            console.error(
+                "Could not load Continue Watching:",
+                error
+            );
+
+
+            res
+                .status(500)
+                .json({
+                    error:
+                        "Could not load Continue Watching"
+                });
+
+        }
+
+    }
+);
+
+
+// ============================================================
+// SAVE CONTINUE WATCHING
+// ============================================================
+
+app.post(
+    "/api/continue-watching",
+    (req, res) => {
+
+        try {
+
+            const {
+                profileId,
+                videoId,
+                position,
+                duration
+            } = req.body;
+
+
+            if (
+                !Number.isInteger(
+                    Number(profileId)
+                ) ||
+                !Number.isInteger(
+                    Number(videoId)
+                )
+            ) {
+
+                return res
+                    .status(400)
+                    .json({
+                        error:
+                            "Invalid profile or video ID"
+                    });
+
+            }
+
+
+            const cleanProfileId =
+                Number(
+                    profileId
+                );
+
+
+            const cleanVideoId =
+                Number(
+                    videoId
+                );
+
+
+            const cleanPosition =
+                Number(
+                    position
+                );
+
+
+            const cleanDuration =
+                Number(
+                    duration
+                );
+
+
+            if (
+                !Number.isFinite(
+                    cleanPosition
+                ) ||
+                !Number.isFinite(
+                    cleanDuration
+                )
+            ) {
+
+                return res
+                    .status(400)
+                    .json({
+                        error:
+                            "Invalid playback position"
+                    });
+
+            }
+
+
+            // ----------------------------------------------------
+            // VERIFY PROFILE EXISTS
+            // ----------------------------------------------------
+
+            const profile =
+                db.prepare(`
+                    SELECT
+                        id
+                    FROM profiles
+                    WHERE id = ?
+                `).get(
+                    cleanProfileId
+                );
+
+
+            if (!profile) {
+
+                return res
+                    .status(404)
+                    .json({
+                        error:
+                            "Profile not found"
+                    });
+
+            }
+
+
+            // ----------------------------------------------------
+            // VERIFY VIDEO EXISTS
+            // ----------------------------------------------------
+
+            const video =
+                db.prepare(`
+                    SELECT
+                        id
+                    FROM videos
+                    WHERE id = ?
+                `).get(
+                    cleanVideoId
+                );
+
+
+            if (!video) {
+
+                return res
+                    .status(404)
+                    .json({
+                        error:
+                            "Video not found"
+                    });
+
+            }
+
+
+            // ----------------------------------------------------
+            // SAVE / UPDATE PROGRESS
+            // ----------------------------------------------------
+
+            db.prepare(`
+                INSERT INTO continue_watching
+                (
+                    profile_id,
+                    video_id,
+                    position,
+                    duration,
+                    updated_at
+                )
+
+                VALUES
+                (
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    CURRENT_TIMESTAMP
+                )
+
+                ON CONFLICT (
+                    profile_id,
+                    video_id
+                )
+
+                DO UPDATE SET
+
+                    position =
+                        excluded.position,
+
+                    duration =
+                        excluded.duration,
+
+                    updated_at =
+                        CURRENT_TIMESTAMP
+
+            `).run(
+
+                cleanProfileId,
+
+                cleanVideoId,
+
+                cleanPosition,
+
+                cleanDuration
+
+            );
+
+
+            res.json({
+                success: true
+            });
+
+        }
+
+        catch (error) {
+
+            console.error(
+                "Could not save Continue Watching:",
+                error
+            );
+
+
+            res
+                .status(500)
+                .json({
+                    error:
+                        "Could not save Continue Watching"
+                });
+
+        }
+
+    }
+);
+
+
+// ============================================================
+// REMOVE FINISHED VIDEO
+// ============================================================
+
+app.delete(
+    "/api/continue-watching/:profileId/:videoId",
+    (req, res) => {
+
+        try {
+
+            const profileId =
+                Number(
+                    req.params.profileId
+                );
+
+
+            const videoId =
+                Number(
+                    req.params.videoId
+                );
+
+
+            if (
+                !Number.isInteger(
+                    profileId
+                ) ||
+                !Number.isInteger(
+                    videoId
+                )
+            ) {
+
+                return res
+                    .status(400)
+                    .json({
+                        error:
+                            "Invalid profile or video ID"
+                    });
+
+            }
+
+
+            db.prepare(`
+                DELETE FROM continue_watching
+
+                WHERE profile_id = ?
+
+                AND video_id = ?
+            `).run(
+
+                profileId,
+
+                videoId
+
+            );
+
+
+            res.json({
+                success: true
+            });
+
+        }
+
+        catch (error) {
+
+            console.error(
+                "Could not remove Continue Watching item:",
+                error
+            );
+
+
+            res
+                .status(500)
+                .json({
+                    error:
+                        "Could not remove Continue Watching item"
                 });
 
         }
@@ -460,8 +871,6 @@ app.delete(
 
     }
 );
-
-
 
 
 // ============================================================

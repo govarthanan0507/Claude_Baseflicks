@@ -27,6 +27,48 @@ db.prepare(`
     )
 `).run();
 
+
+// ============================================================
+// CONTINUE WATCHING TABLE
+// ============================================================
+
+db.prepare(`
+    CREATE TABLE IF NOT EXISTS continue_watching (
+
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+        profile_id INTEGER NOT NULL,
+
+        video_id INTEGER NOT NULL,
+
+        position REAL NOT NULL DEFAULT 0,
+
+        duration REAL NOT NULL DEFAULT 0,
+
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+        UNIQUE (
+            profile_id,
+            video_id
+        ),
+
+        FOREIGN KEY (
+            profile_id
+        )
+        REFERENCES profiles(id)
+        ON DELETE CASCADE,
+
+        FOREIGN KEY (
+            video_id
+        )
+        REFERENCES videos(id)
+        ON DELETE CASCADE
+
+    )
+`).run();
+
+
+
 const profileCount = db.prepare(`
     SELECT COUNT(*) AS count
     FROM profiles
