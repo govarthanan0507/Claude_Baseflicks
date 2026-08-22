@@ -1,3 +1,104 @@
+// ============================================================
+// ACTIVE BASEFLIX PROFILE
+// ============================================================
+
+const profileParams =
+    new URLSearchParams(
+        window.location.search
+    );
+
+
+const profileId =
+    profileParams.get(
+        "profile"
+    );
+
+
+const activeProfile =
+    JSON.parse(
+        localStorage.getItem(
+            "baseflix_profile"
+        ) || "null"
+    );
+
+
+console.log(
+    "Active profile:",
+    activeProfile
+);
+
+
+console.log(
+    "Active profile ID:",
+    profileId
+);
+
+// ============================================================
+// DISPLAY ACTIVE PROFILE
+// ============================================================
+
+function displayActiveProfile() {
+
+    const profileContainer =
+        document.querySelector(
+            "#activeProfile"
+        );
+
+
+    const profileAvatar =
+        document.querySelector(
+            "#activeProfileAvatar"
+        );
+
+
+    const profileName =
+        document.querySelector(
+            "#activeProfileName"
+        );
+
+
+    if (
+        !profileContainer ||
+        !profileAvatar ||
+        !profileName
+    ) {
+
+        return;
+
+    }
+
+
+    if (!activeProfile) {
+
+        profileContainer.style.display =
+            "none";
+
+        return;
+
+    }
+
+
+    profileAvatar.textContent =
+        activeProfile.avatar ||
+        "🎬";
+
+
+    profileName.textContent =
+        activeProfile.name;
+
+
+    profileContainer.style.display =
+        "flex";
+
+}
+
+
+displayActiveProfile();
+
+
+
+
+
 async function loadVideos() {
 
     try {

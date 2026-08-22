@@ -189,7 +189,7 @@ function selectProfile(
 
 
     window.location.href =
-        "/index.html";
+    `/index.html?profile=${profile.id}`;
 
 }
 
