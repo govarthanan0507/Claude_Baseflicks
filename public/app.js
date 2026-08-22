@@ -123,6 +123,52 @@ async function validateActiveProfile() {
 }
 
 
+// ============================================================
+// PROFILE CONTEXT
+// ============================================================
+
+const profileContext = {
+
+    id:
+        Number(
+            profileId
+        ),
+
+    name:
+        activeProfile
+            ? activeProfile.name
+            : null,
+
+    avatar:
+        activeProfile
+            ? activeProfile.avatar
+            : null
+
+};
+
+// ============================================================
+// CONNECT PROFILE TO HOME PAGE
+// ============================================================
+
+const profileData =
+    document.querySelector(
+        "#profileData"
+    );
+
+
+if (profileData) {
+
+    profileData.dataset.profileId =
+        profileContext.id;
+
+}
+
+
+console.log(
+    "Baseflix profile context:",
+    profileContext
+);
+
 
 
 
@@ -193,6 +239,16 @@ displayActiveProfile();
 
 
 async function loadVideos() {
+
+// ========================================================
+    // ACTIVE PROFILE
+    // ========================================================
+
+    console.log(
+        "Loading videos for profile:",
+        profileContext.id
+    );
+
 
     try {
 
