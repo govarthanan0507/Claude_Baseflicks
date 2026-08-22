@@ -33,6 +33,99 @@ console.log(
     profileId
 );
 
+
+// ============================================================
+// VALIDATE ACTIVE PROFILE
+// ============================================================
+
+async function validateActiveProfile() {
+
+    if (
+        !profileId
+    ) {
+
+        console.error(
+            "No profile selected"
+        );
+
+        window.location.href =
+            "/profiles.html";
+
+        return false;
+
+    }
+
+
+    try {
+
+        const response =
+            await fetch(
+                `/api/profiles/${profileId}`
+            );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                "Profile not found"
+            );
+
+        }
+
+
+        const verifiedProfile =
+            await response.json();
+
+
+        // ----------------------------------------------------
+        // Update local profile data with the database version
+        // ----------------------------------------------------
+
+        localStorage.setItem(
+            "baseflix_profile",
+            JSON.stringify(
+                verifiedProfile
+            )
+        );
+
+
+        console.log(
+            "Verified profile:",
+            verifiedProfile
+        );
+
+
+        return true;
+
+    }
+
+    catch (error) {
+
+        console.error(
+            "Profile validation failed:",
+            error
+        );
+
+
+        localStorage.removeItem(
+            "baseflix_profile"
+        );
+
+
+        window.location.href =
+            "/profiles.html";
+
+
+        return false;
+
+    }
+
+}
+
+
+
+
+
 // ============================================================
 // DISPLAY ACTIVE PROFILE
 // ============================================================
@@ -489,5 +582,24 @@ async function loadVideos() {
 // ============================================================
 // START APP
 // ============================================================
+// ============================================================
+// START BASEFLIX
+// ============================================================
 
-loadVideos();
+(async () => {
+
+    const valid =
+        await validateActiveProfile();
+
+
+    if (!valid) {
+
+        return;
+
+    }
+
+
+    await loadVideos();
+
+})();
+

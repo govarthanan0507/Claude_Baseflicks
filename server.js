@@ -128,6 +128,87 @@ app.get("/api/profiles", (req, res) => {
 
 
 // ============================================================
+// GET SINGLE PROFILE
+// ============================================================
+
+app.get(
+    "/api/profiles/:id",
+    (req, res) => {
+
+        try {
+
+            const id =
+                Number(
+                    req.params.id
+                );
+
+
+            if (
+                !Number.isInteger(id)
+            ) {
+
+                return res
+                    .status(400)
+                    .json({
+                        error:
+                            "Invalid profile ID"
+                    });
+
+            }
+
+
+            const profile =
+                db.prepare(`
+                    SELECT
+                        id,
+                        name,
+                        avatar,
+                        created_at
+                    FROM profiles
+                    WHERE id = ?
+                `).get(id);
+
+
+            if (!profile) {
+
+                return res
+                    .status(404)
+                    .json({
+                        error:
+                            "Profile not found"
+                    });
+
+            }
+
+
+            res.json(
+                profile
+            );
+
+        }
+
+        catch (error) {
+
+            console.error(
+                "Could not load profile:",
+                error
+            );
+
+
+            res
+                .status(500)
+                .json({
+                    error:
+                        "Could not load profile"
+                });
+
+        }
+
+    }
+);
+
+
+// ============================================================
 // ADMIN AUTHENTICATION
 // ============================================================
 
