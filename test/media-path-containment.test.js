@@ -147,20 +147,7 @@ test("media-path.js containment (unit)", async (t) => {
 // LAYER 2 -- ROUTE (/video/:filename and /watch/:filename)
 // ============================================================
 
-const APP_FILES = [
-    "server.js",
-    "database.js",
-    "scanner.js",
-    "ffmpeg.js",
-    "poster.js",
-    "media-path.js",
-    // server.js requires these transitively (Task 4-7 modules).
-    "media-probe.js",
-    "playback-decision.js",
-    "client-capabilities.js",
-    "playback-integration.js",
-    "remux.js"
-];
+const APP_FILES = require("./_app-files");
 
 const CLIP_BYTES = "CLIP_BYTES_0123456789_ABCDEFGHIJ";
 const NESTED_BYTES = "NESTED_EPISODE_BYTES";

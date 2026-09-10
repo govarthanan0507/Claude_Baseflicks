@@ -249,11 +249,7 @@ test("resolvePlaybackMode: remux decision carries the Task 6 target container", 
 // PART C -- /video route, real ffmpeg
 // ============================================================
 
-const APP_FILES = [
-    "server.js", "database.js", "scanner.js", "ffmpeg.js", "poster.js",
-    "media-path.js", "media-probe.js", "playback-decision.js",
-    "client-capabilities.js", "playback-integration.js", "remux.js"
-];
+const APP_FILES = require("./_app-files");
 const BASE = "http://127.0.0.1:4000";
 
 function makeMedia(dest) {

@@ -10,6 +10,7 @@ const poster = require("./poster");
 const { resolveMediaFilePath } = require("./media-path");
 const playbackIntegration = require("./playback-integration");
 const remux = require("./remux");
+const audioTranscode = require("./audio-transcode");
 
 const app = express();
 
@@ -3555,6 +3556,7 @@ app.get("/video/:filename", async (req, res) => {
     let playbackMode = null;
     let playbackBasis = "fallback";
     let playbackTarget = null;
+    let playbackAudioCodec = null;
 
     try {
 
@@ -3570,6 +3572,7 @@ app.get("/video/:filename", async (req, res) => {
         playbackMode = resolved.mode;
         playbackBasis = resolved.basis;
         playbackTarget = resolved.target || null;
+        playbackAudioCodec = resolved.audioCodec || null;
 
         if (playbackMode) {
             res.setHeader("X-Baseflix-Playback-Mode", playbackMode);
@@ -3640,6 +3643,56 @@ app.get("/video/:filename", async (req, res) => {
         }
 
         // remux unavailable -> fall through to the existing behaviour
+    }
+
+
+    // Task 10: the engine chose AUDIO_TRANSCODE -> keep the video as-is
+    // (-c:v copy) and re-encode only the audio to the codec + container
+    // Task 6 already chose, cache it, and serve the COMPLETED file
+    // through the same hardened path. VIDEO_TRANSCODE is NOT executed
+    // here -- it falls through to the existing logic. A failed / timed
+    // out job also falls through and is never reported as an
+    // audio transcode.
+    if (
+        playbackMode === "audio_transcode" &&
+        originalExists && playbackTarget && playbackAudioCodec
+    ) {
+
+        const audioAbort = new AbortController();
+        res.on("close", () => audioAbort.abort());
+
+        let audioResult = null;
+
+        try {
+            audioResult =
+                await audioTranscode.ensureAudioTranscode({
+                    sourcePath: videoPath,
+                    relativePath: filename,
+                    container: playbackTarget,
+                    audioCodec: playbackAudioCodec,
+                    signal: audioAbort.signal
+                });
+        }
+        catch (audioError) {
+            console.error(
+                "Audio transcode failed; using existing fallback:",
+                audioError && audioError.message
+            );
+        }
+
+        if (
+            audioResult && audioResult.ok &&
+            !res.writableEnded && !res.destroyed
+        ) {
+            res.setHeader("X-Baseflix-Playback", "audio-transcode");
+            res.setHeader(
+                "X-Baseflix-Playback-Target",
+                audioResult.container + "/" + audioResult.audioCodec
+            );
+            return serveDirectPlay(audioResult.path, req, res);
+        }
+
+        // audio transcode unavailable -> fall through
     }
 
     res.setHeader("X-Baseflix-Playback", "fallback");

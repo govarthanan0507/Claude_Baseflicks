@@ -637,6 +637,136 @@ function remuxToFile(inputPath, outputPath, options) {
 }
 
 
+// audio target codec -> the ffmpeg encoder + a sensible default
+// bitrate. Task 6's AUDIO_TARGET_PREFERENCE only ever yields one of
+// these keys, and Task 6 also guarantees the chosen container can
+// carry the chosen codec -- this map is just the encoder wiring.
+const AUDIO_ENCODERS = {
+    aac:    { encoder: "aac",        bitrate: "192k" },
+    opus:   { encoder: "libopus",    bitrate: "128k" },
+    mp3:    { encoder: "libmp3lame", bitrate: "192k" },
+    vorbis: { encoder: "libvorbis",  bitrate: "160k" },
+    ac3:    { encoder: "ac3",        bitrate: "384k" },
+    eac3:   { encoder: "eac3",       bitrate: "384k" },
+    flac:   { encoder: "flac",       bitrate: null }
+};
+
+
+/*
+    AUDIO-ONLY TRANSCODE to a complete file on disk (Task 10).
+
+    Keep the primary video EXACTLY as-is (-c:v copy) and re-encode
+    only the primary audio to `options.audioCodec`, into
+    `options.container` ("mp4" | "webm"). Same safety guarantees as
+    remuxToFile(): spawn() argv array (no shell), <output>.tmp ->
+    rename only on clean exit, .tmp removed on failure/kill.
+
+    Rejects with an explanatory error if `audioCodec` is not one this
+    build knows how to encode -- the caller then falls back rather
+    than the server inventing an alternative.
+
+    options:
+      container       "mp4" (default) | "webm"
+      audioCodec      "aac" | "opus" | "mp3" | "vorbis" | "ac3" | "eac3" | "flac"
+      onProcessStart  called with the spawned ChildProcess
+*/
+function audioTranscodeToFile(inputPath, outputPath, options) {
+
+    options = options || {};
+
+    return new Promise((resolve, reject) => {
+
+        const spec = AUDIO_ENCODERS[options.audioCodec];
+
+        if (!spec) {
+            return reject(new Error(
+                `audioTranscodeToFile: unsupported target audio codec ` +
+                `'${options.audioCodec}'`
+            ));
+        }
+
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+
+        const muxArgs =
+            options.container === "webm"
+                ? ["-f", "webm"]
+                : ["-f", "mp4", "-movflags", "+faststart"];
+
+        const bitrate =
+            options.audioBitrate || spec.bitrate;
+
+        const tempPath =
+            `${outputPath}.tmp`;
+
+        const ffmpeg =
+            spawn(
+                "ffmpeg",
+                [
+                    "-i", inputPath,
+
+                    "-map", "0:v:0?",
+                    "-map", "0:a:0?",
+
+                    "-c:v", "copy",
+                    "-c:a", spec.encoder,
+                    ...(bitrate ? ["-b:a", bitrate] : []),
+                    "-sn",
+
+                    ...muxArgs,
+
+                    "-y",
+                    tempPath
+                ]
+            );
+
+        if (typeof options.onProcessStart === "function") {
+            options.onProcessStart(ffmpeg);
+        }
+
+        let stderrOutput = "";
+
+        ffmpeg.stderr.on("data", (chunk) => {
+            stderrOutput += chunk.toString();
+        });
+
+        ffmpeg.on("error", (error) => {
+            fs.unlink(tempPath, () => {});
+            reject(error);
+        });
+
+        ffmpeg.on("close", (code, signal) => {
+
+            if (code === 0 && !signal) {
+
+                fs.rename(tempPath, outputPath, (renameError) => {
+                    if (renameError) {
+                        fs.unlink(tempPath, () => {});
+                        return reject(renameError);
+                    }
+                    resolve({});
+                });
+
+            }
+            else {
+
+                fs.unlink(tempPath, () => {});
+
+                reject(
+                    new Error(
+                        `ffmpeg audio transcode exited code=${code} signal=${signal}: ` +
+                        stderrOutput.slice(-400)
+                    )
+                );
+
+            }
+
+        });
+
+    });
+
+}
+
+
 /*
     Transcode a file to a browser-compatible H.264/AAC stream and
     pipe the output directly into a writable stream (e.g. an
@@ -949,6 +1079,7 @@ module.exports = {
     transcodeToMp4Stream,
     transcodeToMp4File,
     remuxToFile,
+    audioTranscodeToFile,
     generateThumbnail,
     getTranscodedRelativePath
 };

@@ -267,13 +267,13 @@ async function resolvePlaybackMode(params, options) {
     }
 
     if (light.mode !== MODES.DIRECT_PLAY) {
-        return { mode: light.mode, basis: "lightweight", target: playbackTarget(light) };
+        return Object.assign({ mode: light.mode, basis: "lightweight" }, transformParams(light));
     }
 
     if (!needsTranscode) {
         // Scanner already confirmed browser-mainstream codecs; the
         // degraded probe is sufficient to route this to Direct Play.
-        return { mode: MODES.DIRECT_PLAY, basis: "lightweight", target: null };
+        return { mode: MODES.DIRECT_PLAY, basis: "lightweight", target: null, audioCodec: null };
     }
 
     // DIRECT_PLAY for a file the OLD whitelist rejected -> confirm with
@@ -292,7 +292,10 @@ async function resolvePlaybackMode(params, options) {
 
     const cached = decisionCacheGet(cacheKey);
     if (cached) {
-        return { mode: cached.mode, basis: "full-probe", target: cached.target, cached: true };
+        return {
+            mode: cached.mode, basis: "full-probe",
+            target: cached.target, audioCodec: cached.audioCodec, cached: true
+        };
     }
 
     let full;
@@ -306,19 +309,29 @@ async function resolvePlaybackMode(params, options) {
         return { mode: null, basis: "fallback", error: error.message };
     }
 
-    const resolved = { mode: full.mode, target: playbackTarget(full) };
+    const resolved = Object.assign({ mode: full.mode }, transformParams(full));
     decisionCacheSet(cacheKey, resolved);
-    return { mode: resolved.mode, basis: "full-probe", target: resolved.target };
+    return { mode: resolved.mode, basis: "full-probe", target: resolved.target, audioCodec: resolved.audioCodec };
 }
 
-// The container/codec target the decision engine already chose for a
-// transformation mode -- surfaced so the caller can hand it to the
-// remux/transcode executor WITHOUT re-deriving any capability logic.
-function playbackTarget(decision) {
-    if (!decision || typeof decision !== "object") return null;
-    if (decision.mode === MODES.REMUX && decision.remux) return decision.remux.target || null;
-    if (decision.mode === MODES.AUDIO_TRANSCODE && decision.audioTranscode) return decision.audioTranscode.target || null;
-    return null;
+// The container + audio-codec target the decision engine ALREADY
+// chose for a transformation mode -- surfaced verbatim so the caller
+// can hand them to the remux / audio-transcode executor WITHOUT
+// re-deriving any capability logic.
+function transformParams(decision) {
+    if (!decision || typeof decision !== "object") {
+        return { target: null, audioCodec: null };
+    }
+    if (decision.mode === MODES.REMUX && decision.remux) {
+        return { target: decision.remux.target || null, audioCodec: null };
+    }
+    if (decision.mode === MODES.AUDIO_TRANSCODE && decision.audioTranscode) {
+        return {
+            target: decision.audioTranscode.target || null,
+            audioCodec: decision.audioTranscode.audioCodec || null
+        };
+    }
+    return { target: null, audioCodec: null };
 }
 
 function _clearDecisionCache() {
