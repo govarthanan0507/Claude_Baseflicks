@@ -32,20 +32,36 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 
 ## Task 3 — Direct-Play HTTP Range Hardening
 
-**Status:** ASSIGNED / PENDING
+**Status:** PASS / ACCEPTED after rework
 
-**Assignment:** Harden direct file serving to provide reliable single-range HTTP behavior, correct 416 handling, safe multiple-range fallback, extension-based MIME types, stat-race protection, and focused automated tests while preserving Task 2 containment.
+**Initial commit:** `1c3d51c7d0e22037cb976bedaeb2bd5744ecb9f7`
 
-**Required range cases:** `bytes=0-99`, `bytes=1000-`, `bytes=-500`, end beyond EOF, suffix larger than file, unsatisfiable range, malformed/unsupported range, and multiple ranges.
+**Rework commit:** `2c00656e341ec857ed6867ba9effc379f31b8848`
 
-**Required MIME cases:** `.mp4`, `.webm`, `.mov`, `.m4v`, `.mkv`, `.avi`, plus safe fallback.
+**Work:** Hardened direct-play single-range handling, 416 responses, safe malformed/multiple-range fallback, extension-based MIME types, stream/stat error handling, and focused HTTP regression tests while preserving Task 2 containment.
 
-**Restrictions:** No playback capability model, remux/transcoding redesign, cache redesign, scanner/database/UI changes, new dependencies, or server.js rewrite.
+**PM feedback/rework:** The initial parser filtered empty comma-separated range specs, allowing `bytes=0-99,` to become a valid 206. D1 corrected this by treating any comma-containing Range value as safe full-file fallback and added coverage for leading/trailing/double-comma/list-shaped cases.
 
-**Completion:** Developer must run `npm test`, commit, push, and report exact results. PM validates GitHub before accepting/merging.
+**Developer test result after rework:** 66 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0.
 
----
+**Result:** PM independently inspected the actual `server.js` and range tests on `feature/playback`. Task 3 rework accepted. It remains on `feature/playback`; no individual-task merge to `main`.
+
+## Task 4 — Structured Media Capability Probe Model
+
+**Status:** PASS / ACCEPTED
+
+**Developer commit:** `f5049fd97f564658bcd3f26f684e967a803e9424` on `claude_baseflicks/feature/playback` (equivalent implementation commit `d4089cba9efc30da6611ff6ec1066455ca73fd98` on `baseflicks/feature/playback`).
+
+**Developer report:** D1 reported Task 4 complete with changes limited to `ffmpeg.js`, new `media-probe.js`, and new `test/media-probe.test.js`; no dependencies or unrelated subsystems changed. D1 reported 23 new fixture-driven tests and full suite result of 89 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0. D1 also reported manual real-media checks for MP4, MKV, and a missing file.
+
+**Work:** Added an additive raw ffprobe boundary and a normalized media description layer. The normalized model captures container information and every video, audio, and subtitle stream; numeric fields are normalized to Number/null, frame-rate rationals are parsed, language tags have fallbacks, subtitle codecs receive coarse text/image classification, non-contiguous stream indexes are preserved, and audio-only media is valid with an empty video array. Filesystem/probe failures return stable `not_found` or `probe_failed` results.
+
+**Scope preservation:** Existing `probeFile()` and `checkPlayability()` were preserved; no Direct Play/Remux/Transcode decision logic was added. `server.js`, `media-path.js`, scanner, database, UI, package dependencies, and metadata were not changed by Task 4.
+
+**PM result:** PASS / ACCEPTED after independent inspection of the actual commit, `media-probe.js`, `ffmpeg.js`, and Task 4 tests. Task 2 and Task 3 behavior remains outside the Task 4 diff and is covered by the full reported suite.
+
+**Merge:** PENDING. D1 remains on `feature/playback`; PM will merge only after all D1 tasks are completed and the final D1 review passes.
 
 ## Change Policy
 
-For every subsequent playback task, append a new task section containing assignment, work performed, files changed, developer tests, commit SHA, status, and PM outcome. Never delete prior history.
+For every subsequent playback task, append a new task section containing assignment, work performed, files changed, developer tests, commit SHA, status, developer report/rework history, and PM outcome. Never delete prior history.
