@@ -202,6 +202,75 @@ function probeFile(filePath) {
 
 
 /*
+    Run ffprobe and return its COMPLETE parsed JSON document
+    (format block + every stream), or null if the file can't be
+    read, ffprobe exits non-zero, or its output isn't valid JSON.
+
+    This is the raw ffprobe shape. It is deliberately NOT a stable
+    application contract -- consumers that want a normalized,
+    multi-stream media description should call
+    media-probe.js's describeMedia(), which is built on top of this.
+
+    probeFile() above is left untouched: it keeps its own reduced
+    single-video/single-audio shape that scanner.js depends on.
+*/
+function probeRaw(filePath) {
+
+    return new Promise((resolve) => {
+
+        execFile(
+            "ffprobe",
+            [
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_format",
+                "-show_streams",
+                filePath
+            ],
+            {
+                // Same generous cap as probeFile -- ffprobe JSON can
+                // be large for files with many streams/chapters.
+                maxBuffer: 10 * 1024 * 1024
+            },
+            (error, stdout) => {
+
+                if (error) {
+
+                    console.error(
+                        `ffprobe failed for ${filePath}:`,
+                        error.message
+                    );
+
+                    return resolve(null);
+
+                }
+
+                try {
+
+                    resolve(JSON.parse(stdout));
+
+                }
+
+                catch (parseError) {
+
+                    console.error(
+                        `Could not parse ffprobe output for ${filePath}:`,
+                        parseError.message
+                    );
+
+                    resolve(null);
+
+                }
+
+            }
+        );
+
+    });
+
+}
+
+
+/*
     Given a probeFile() result, decide whether the browser can
     play this file's raw bytes as-is, or whether it needs to be
     transcoded first. Also explains *why*, which is useful for
@@ -767,6 +836,7 @@ function generateThumbnail(inputPath, outputPath, timestampSeconds) {
 
 module.exports = {
     probeFile,
+    probeRaw,
     checkPlayability,
     transcodeToMp4Stream,
     transcodeToMp4File,
