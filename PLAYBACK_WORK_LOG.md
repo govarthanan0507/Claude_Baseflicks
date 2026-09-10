@@ -164,11 +164,33 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 
 **Developer test result:** 243 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0.
 
-**Known limitations:** A lone timeout now cancels the Remux rather than warming the cache in the background; the in-flight registry is process-local; no cache size/age eviction was introduced. CI remains absent on the feature branch, so local `npm test` is the recorded execution evidence.
+**Known limitations:** A lone timeout now cancels the Remux rather than leaving it running to warm the cache; the in-flight registry is process-local; no cache size/age eviction was introduced. CI remains absent on the feature branch, so local `npm test` is the recorded execution evidence.
 
 **PM result:** PASS / ACCEPTED after independent GitHub inspection of the authoritative commit, actual `remux.js` lifecycle implementation, commit diff, and Task 11 regression suite. No correctness blocker was found within scope.
 
 **Merge:** PENDING. No individual D1 task is merged to `main`; PM will perform the controlled merge only after final full-workstream review.
+
+## Task 12 — Video Transcode Execution Integration
+
+**Status:** PASS / ACCEPTED
+
+**Authoritative commit:** `1c49430eefac29e0f6ebb0547263e7572154dd61` on `claude_baseflicks/feature/playback`.
+
+**Work:** Added the final execution layer for the Task 6 hierarchy: Direct Play → Remux → Audio Transcode → Video Transcode. Video Transcode now re-encodes the selected video and audio targets into a complete seekable file, stores it under a deterministic hashed `vt-*` cache in the existing `transcoded/` directory, de-duplicates concurrent requests, atomically finalizes output, and serves the completed artifact through the unchanged Task 3 Range path.
+
+**Scope:** The Task 12 diff is limited to `ffmpeg.js`, `playback-integration.js`, `server.js`, `video-transcode.js`, and `test/video-transcode-execution.test.js`. The `playback-integration.js` change is accepted as strictly necessary target plumbing for the Task 6-selected `videoCodec`; no new decision rules were added. No scanner, database/schema, metadata, UI, auth, dependency, Task 2 containment, Task 3 Range, Task 9 Remux, or Task 10 Audio Transcode design was changed.
+
+**PM validation:** PM independently inspected the actual GitHub source and commit diff, not only the developer report. FFmpeg uses `spawn("ffmpeg", argv)` without shell execution; unsupported codecs are rejected; `.tmp` output is renamed only after clean completion; failed/cancelled temporary output is cleaned. Cache identity includes relative path, size, full `mtimeMs`, mode, target container, video codec, and audio codec. Concurrent requests share one in-flight job. The Task 10/11 waiter lifecycle pattern is present, including guarded release, timeout/abort handling, last-waiter cancellation, and kill-on-process-registration.
+
+**Security/regression validation:** Task 2 containment and Task 3 Range serving are reused rather than duplicated. Direct Play, Remux, and Audio Transcode remain higher priority. The real route suite covers 206/416, traversal rejection, cache reuse, source mutation invalidation, concurrent de-duplication, client disconnect, and shell-metacharacter input without shell interpolation.
+
+**Developer test result:** 275 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0. The Task 12 commit adds 32 focused tests. No GitHub Actions/status checks are attached to the feature branch.
+
+**Known limitations accepted:** Cold Video Transcode waits up to 45 seconds before falling back; a lone timeout cancels rather than warms the cache. Current encoding has no adaptive resolution cap or hardware acceleration, uses fixed quality settings, and has no transcode-cache size/age eviction. These are not correctness blockers for this execution-layer task.
+
+**PM result:** **PASS / ACCEPTED. No rework required.**
+
+**Merge:** PENDING until final D1 workstream review. `main` remains untouched.
 
 ## Change Policy
 
