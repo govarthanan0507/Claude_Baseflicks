@@ -56,23 +56,25 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 
 ## Task 3 — Direct-Play HTTP Range Hardening
 
-**Developer commit:** PENDING
+**Developer commit:** `1c3d51c7d0e22037cb976bedaeb2bd5744ecb9f7`
 
-**Scope validation:** Pending developer completion.
+**Scope validation:** PASS for intended scope. The implementation is limited to direct-play HTTP range/MIME handling, stream lifecycle/error handling, focused tests, and the sequential test-script adjustment. Task 2 containment code was preserved.
 
-**Code validation:** Pending.
+**Code validation:** Actual `server.js` implementation reviewed. `parseByteRange()` now distinguishes full, partial, and unsatisfiable ranges; supports explicit, open-ended, and suffix ranges; clamps valid ends to EOF; and produces 416 for valid unsatisfiable single ranges. `serveDirectPlay()` uses extension-aware MIME types, protects non-regular files, handles stream errors, and destroys streams when the response closes. The implementation avoids the previous invalid `createReadStream()` offsets and hard-coded `video/mp4` behavior.
 
-**Test validation:** Pending. Must include focused range/MIME tests and exact `npm test` results.
+**Test validation:** Actual `test/direct-play-range.test.js` was added with booted-server HTTP assertions covering range status, headers, response bytes, MIME mappings, uppercase extension handling, nested paths, and Task 2 containment regression. `package.json` sets `--test-concurrency=1` to avoid server-port races. However, PM could not verify an actual CI status for this commit because GitHub reported no attached status checks.
 
-**Regression validation:** Must preserve Task 2 media-root containment behavior.
+**Regression validation:** Task 2 containment implementation remains in use; no scanner/database/UI/FFmpeg redesign was introduced.
 
-**Benchmark validation:** Must meet reliable HTTP range-serving behavior expected of a competitive media server, including correct 206/416 semantics and MIME types.
+**Benchmark validation:** Core single-range HTTP behavior now meets the required reliability baseline for direct serving and is materially stronger than the previous implementation.
 
-**Issues:** None yet; task is in progress.
+**Issues:** The parser filters empty comma-separated range specifications before counting them. Therefore a malformed header with a trailing comma such as `bytes=0-99,` can be interpreted as a valid single range and return 206 instead of the required safe full-file 200 fallback. Tests should explicitly cover trailing/empty comma specifications and other malformed comma forms.
 
-**PM decision:** PENDING
+**PM decision:** REWORK — minor correction required before PASS.
 
-**Merge decision:** No merge until PM validation passes.
+**Required correction:** Treat empty range specifications created by commas as malformed/multi-range input rather than silently filtering them. Add regression tests for `bytes=0-99,`, `bytes=,0-99`, and similar empty-spec comma forms, confirming safe 200 full-file fallback. Re-run the complete test suite and report exact pass/fail/skipped/todo/cancelled counts. No redesign or unrelated changes.
+
+**Merge decision:** BLOCKED pending correction and PM re-validation. PM will not merge Task 3 to `main` until the actual corrected code and tests pass review.
 
 **Final merged commit:** PENDING
 
