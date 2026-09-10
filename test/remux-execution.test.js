@@ -203,27 +203,183 @@ test("ensureRemux: when the LAST waiter aborts, the job is killed and cleaned", 
     fs.rmSync(path.dirname(src), { recursive: true, force: true });
 });
 
-test("ensureRemux: a slow first request times out but leaves the job running for the next", async () => {
-    const src = srcFile("slow.mkv", Buffer.alloc(64));
-    let finished = false;
-    const run = async (i, o, op) => {
-        await new Promise(r => setTimeout(r, 120));
-        fs.writeFileSync(o, "DONE");
-        finished = true;
-    };
+// ---- waiter / abort lifecycle regressions (Task 11) ---------
+const tick = () => new Promise(r => setTimeout(r, 15));
 
-    const first = await remux.ensureRemux({ sourcePath: src, relativePath: "slow.mkv", container: "mp4" }, { run, timeoutMs: 40 });
-    assert.equal(first.ok, false);
-    assert.equal(first.timedOut, true);
+/*
+    A controllable fake ffmpeg run for remux:
+      handle.register() -> calls onProcessStart with a fake proc
+      handle.finish()   -> writes the output + resolves
+      handle.proc.killed -> observe whether the job was killed
+    register() is NOT auto-called unless autoRegister !== false, so
+    the abort-before-onProcessStart race is exercisable.
+*/
+function controllableRun(opts) {
+    opts = opts || {};
+    const handle = { proc: null, register: null, finish: null, calls: 0 };
+    handle.run = (input, output, op) => new Promise((resolve, reject) => {
+        handle.calls += 1;
+        handle.proc = {
+            exitCode: null, killed: false,
+            kill() { this.killed = true; this.exitCode = null; reject(new Error("killed")); }
+        };
+        handle.register = () => op.onProcessStart(handle.proc);
+        handle.finish = () => { fs.writeFileSync(output, "DONE"); handle.proc.exitCode = 0; resolve(); };
+        if (opts.autoRegister !== false) handle.register();
+    });
+    return handle;
+}
 
-    await new Promise(r => setTimeout(r, 150));
-    assert.equal(finished, true, "the job kept running after the request gave up");
+test("remux lifecycle: abort BEFORE onProcessStart -> job killed the instant ffmpeg registers", async () => {
+    const src = srcFile("pre.mkv");
+    const h = controllableRun({ autoRegister: false });
+    const ac = new AbortController();
+    const p = remux.ensureRemux(
+        { sourcePath: src, relativePath: "pre.mkv", container: "mp4", signal: ac.signal },
+        { run: h.run, timeoutMs: 2000 }
+    );
+    await tick();
+    ac.abort();
+    await tick();
+    assert.equal(h.proc.killed, false, "nothing to kill before the process registers");
+    h.register();
+    await tick();
+    assert.equal(h.proc.killed, true, "cancelled job is killed as soon as ffmpeg registers");
+    assert.equal((await p).ok, false);
+    fs.rmSync(path.dirname(src), { recursive: true, force: true });
+});
 
-    const second = await remux.ensureRemux({ sourcePath: src, relativePath: "slow.mkv", container: "mp4" }, { run, timeoutMs: 40 });
-    assert.equal(second.ok, true);
-    assert.equal(second.reused, true);
+test("remux lifecycle: ALL waiters abort before ffmpeg starts -> one job, killed on arrival", async () => {
+    const src = srcFile("allgone.mkv");
+    const h = controllableRun({ autoRegister: false });
+    const ac1 = new AbortController();
+    const ac2 = new AbortController();
+    const params = { sourcePath: src, relativePath: "allgone.mkv", container: "mp4" };
+    const p1 = remux.ensureRemux({ ...params, signal: ac1.signal }, { run: h.run, timeoutMs: 2000 });
+    const p2 = remux.ensureRemux({ ...params, signal: ac2.signal }, { run: h.run, timeoutMs: 2000 });
+    await tick();
+    assert.equal(h.calls, 1, "two requests, one ffmpeg job");
+    ac1.abort();
+    ac2.abort();
+    await tick();
+    h.register();
+    await tick();
+    assert.equal(h.proc.killed, true);
+    await Promise.all([p1, p2]);
+    fs.rmSync(path.dirname(src), { recursive: true, force: true });
+});
 
-    fs.rmSync(second.path, { force: true });
+test("remux lifecycle: two waiters, ONE aborts, the other remains -> ffmpeg continues", async () => {
+    const src = srcFile("stay.mkv");
+    const h = controllableRun();
+    const ac1 = new AbortController();
+    const params = { sourcePath: src, relativePath: "stay.mkv", container: "mp4" };
+    const p1 = remux.ensureRemux({ ...params, signal: ac1.signal }, { run: h.run, timeoutMs: 2000 });
+    const p2 = remux.ensureRemux({ ...params }, { run: h.run, timeoutMs: 2000 });
+    await tick();
+    ac1.abort();
+    await tick();
+    assert.equal(h.proc.killed, false, "a waiter still remains -> job not killed");
+    h.finish();
+    const r2 = await p2;
+    assert.equal(r2.ok, true, "the remaining waiter receives the completed remux");
+    assert.equal(h.proc.killed, false);
+    fs.rmSync(r2.path, { force: true });
+    fs.rmSync(path.dirname(src), { recursive: true, force: true });
+});
+
+test("remux lifecycle: timeout releases the waiter (not a phantom); job dies once the real last waiter leaves", async () => {
+    const src = srcFile("phantom.mkv");
+    const h = controllableRun();          // registers, never finishes on its own
+    const acB = new AbortController();
+    const params = { sourcePath: src, relativePath: "phantom.mkv", container: "mp4" };
+    const pA = remux.ensureRemux({ ...params }, { run: h.run, timeoutMs: 30 });
+    const pB = remux.ensureRemux({ ...params, signal: acB.signal }, { run: h.run, timeoutMs: 5000 });
+    const a = await pA;
+    assert.equal(a.timedOut, true);
+    await tick();
+    assert.equal(h.proc.killed, false, "B is still genuinely waiting -> ffmpeg keeps running");
+    acB.abort();
+    await tick();
+    assert.equal(h.proc.killed, true, "A timed out + B aborted -> zero waiters -> ffmpeg killed");
+    await pB;
+    fs.rmSync(path.dirname(src), { recursive: true, force: true });
+});
+
+test("remux lifecycle: a timeout as the LAST waiter cancels the ffmpeg job", async () => {
+    const src = srcFile("tolast.mkv");
+    const h = controllableRun();          // registers, never finishes
+    const r = await remux.ensureRemux(
+        { sourcePath: src, relativePath: "tolast.mkv", container: "mp4" },
+        { run: h.run, timeoutMs: 30 }
+    );
+    assert.equal(r.timedOut, true);
+    await tick();
+    assert.equal(h.proc.killed, true, "no one waiting after the timeout -> job killed");
+    fs.rmSync(path.dirname(src), { recursive: true, force: true });
+});
+
+test("remux lifecycle: an aborting request returns promptly, not after the whole remux", async () => {
+    const src = srcFile("prompt.mkv");
+    const h = controllableRun();          // never finishes
+    const ac1 = new AbortController();
+    const params = { sourcePath: src, relativePath: "prompt.mkv", container: "mp4" };
+    // a second, non-aborting waiter keeps the job alive so p1 cannot
+    // "return" simply because the job ended
+    const pOther = remux.ensureRemux({ ...params }, { run: h.run, timeoutMs: 60000 });
+    const p1 = remux.ensureRemux({ ...params, signal: ac1.signal }, { run: h.run, timeoutMs: 60000 });
+    await tick();
+    ac1.abort();
+    const started = Date.now();
+    const r1 = await p1;                  // must resolve now, not in ~60s
+    assert.ok(Date.now() - started < 1000);
+    assert.equal(r1.ok, false);
+    assert.equal(r1.aborted, true);
+    h.finish();
+    await pOther;
+    fs.rmSync(path.dirname(src), { recursive: true, force: true });
+});
+
+test("remux lifecycle: successful completion cleans in-flight state; next request reuses", async () => {
+    const src = srcFile("norm.mkv");
+    const h = controllableRun();
+    const params = { sourcePath: src, relativePath: "norm.mkv", container: "mp4" };
+    const p = remux.ensureRemux({ ...params }, { run: h.run, timeoutMs: 2000 });
+    await tick();
+    h.finish();
+    const r = await p;
+    assert.equal(r.ok, true);
+    assert.equal(r.reused, false);
+    assert.equal(h.proc.killed, false);
+    assert.equal(remux._activeJobCount(), 0, "in-flight registry emptied after success");
+
+    const again = await remux.ensureRemux({ ...params }, { run: h.run, timeoutMs: 2000 });
+    assert.equal(again.ok, true);
+    assert.equal(again.reused, true);
+    assert.equal(h.calls, 1, "no second ffmpeg run");
+
+    fs.rmSync(r.path, { force: true });
+    fs.rmSync(path.dirname(src), { recursive: true, force: true });
+});
+
+test("remux lifecycle: a failed job leaves no in-flight state; the next request starts fresh", async () => {
+    const src = srcFile("failfresh.mkv");
+    const failing = { calls: 0, run: async () => { failing.calls++; throw new Error("boom"); } };
+    const params = { sourcePath: src, relativePath: "failfresh.mkv", container: "mp4" };
+
+    const r1 = await remux.ensureRemux({ ...params }, { run: failing.run });
+    assert.equal(r1.ok, false);
+    assert.equal(remux._activeJobCount(), 0, "failed job removed from the registry");
+
+    const h = controllableRun();
+    const r2p = remux.ensureRemux({ ...params }, { run: h.run, timeoutMs: 2000 });
+    await tick();
+    assert.equal(h.calls, 1, "a fresh job was started after the failure");
+    h.finish();
+    const r2 = await r2p;
+    assert.equal(r2.ok, true);
+
+    fs.rmSync(r2.path, { force: true });
     fs.rmSync(path.dirname(src), { recursive: true, force: true });
 });
 
