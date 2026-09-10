@@ -104,6 +104,34 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 
 **Merge policy:** No task-level merge. Task 4 remains on `feature/playback`. PM will reconcile branch divergence and merge only after all D1 tasks are complete and the final full D1 review passes.
 
+## Task 5 — Client Capability Model
+
+**Developer code commit:** `f4aad4700696a847f1db8706249c71f709008a81` on `baseflicks/feature/playback`.
+
+**Authoritative branch tip inspected:** `e808c1430e46dd4fd3cfadc12d7a97cc70f95eef` on `claude_baseflicks/feature/playback`.
+
+**Developer response:** D1 reported Task 5 complete and stopped as instructed. The report supplied the changed-file list, normalized contract, browser detection behavior, limitations, and full-suite result of 114 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0. D1 confirmed `main` was unchanged and no dependencies were added.
+
+**Scope validation:** PASS. PM independently compared the actual Task 5 commit with the preceding PM documentation tip and confirmed exactly two added files: `client-capabilities.js` and `test/client-capabilities.test.js`. No `server.js`, `ffmpeg.js`, `media-path.js`, scanner, database, metadata, UI, or `package.json` changes were introduced by Task 5.
+
+**Code validation:** PASS. `client-capabilities.js` provides a UMD-compatible capability foundation with a single registry for the required video/audio/container formats, alias canonicalization, tri-state (`supported` / `unsupported` / `unknown`) values, safe invalid/partial input handling, duplicate conflict handling, validated resolution limits, warnings, frozen normalized output, and a detached frozen raw audit copy. `capabilityOf()` is alias-aware and conservative.
+
+**Browser capability validation:** PASS for the assigned foundation scope. The implementation provides injectable `HTMLMediaElement.canPlayType()` detection, optional pre-gathered `MediaCapabilities.decodingInfo()` result refinement, and screen/DPR resolution information. Missing or uncertain capability information remains `unknown`; browser APIs are not executed by the server-side normalization path.
+
+**Decision-engine boundary:** PASS. The implementation explicitly does not combine container, codec, profile, level, resolution, and audio properties and does not select Direct Play, Remux, Audio Transcode, or Video Transcode. That composition remains a later task.
+
+**Regression validation:** PASS. The Task 5 tests explicitly verify that Task 4 media-probe codec names canonicalize into the client registry and that existing `ffmpeg.js` and `media-path.js` contracts remain available. The capability module does not pull `server.js` into its require graph.
+
+**Test validation:** PASS based on D1's reported complete local suite: 114 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0, including 25 Task 5 tests. PM independently inspected the actual Task 5 test file and confirmed coverage for model creation, supported/unsupported/unknown values, partial information, invalid input, browser API fallback, normalization/aliases/conflicts/freezing/raw detachment, Task 4 regression, and playback-contract preservation.
+
+**CI validation:** No GitHub Actions/status check is attached to the Task 5 commit. Local test evidence is therefore the recorded execution evidence.
+
+**Known limitations recorded:** The capability model is not wired into the live player or HTTP API yet; `MediaCapabilities.decodingInfo()` gathering remains the browser caller's responsibility; capability granularity is codec-name level and does not yet represent profile/level/bit-depth/HDR/channel constraints; subtitles are outside this task. These are deferred by design and are not blockers for Task 5.
+
+**PM decision:** **PASS / ACCEPTED.** Task 5 meets the requested capability-model foundation and preserves the boundary against premature playback decision logic.
+
+**Merge policy:** No task-level merge. Task 5 remains on `feature/playback`. PM will reconcile branch divergence and merge only after all D1 tasks are complete and the final full D1 review passes.
+
 ## PM Merge Policy
 
 Developers do not merge playback branches into `main` themselves. PM validates each task on `feature/playback` and records the result here. **No individual D1 task is merged to `main`.** After all D1 tasks are completed, PM performs a final full-workstream review, reconciles branch divergence, and then performs the controlled merge to `main` if the complete D1 implementation passes.
