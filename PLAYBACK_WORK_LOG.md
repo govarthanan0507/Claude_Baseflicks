@@ -56,7 +56,7 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 
 **Work:** Added an additive raw ffprobe boundary and a normalized media description layer. The normalized model captures container information and every video, audio, and subtitle stream; numeric fields are normalized to Number/null, frame-rate rationals are parsed, language tags have fallbacks, subtitle codecs receive coarse text/image classification, non-contiguous stream indexes are preserved, and audio-only media is valid with an empty video array. Filesystem/probe failures return stable `not_found` or `probe_failed` errors.
 
-**Scope preservation:** Existing `probeFile()` and `checkPlayability()` were preserved; no Direct Play/Remux/Transcode decision logic was added. `server.js`, `media-path.js`, scanner, database, UI, package dependencies, and metadata were not changed by Task 4.
+**Scope preservation:** Existing `probeFile()` and `checkPlayability()` were preserved; no Direct Play/Remux/Audio Transcode/Video Transcode decision logic was added. `server.js`, `media-path.js`, scanner, database, UI, package dependencies, and metadata were not changed by Task 4.
 
 **PM result:** PASS / ACCEPTED after independent inspection of the actual commit, `media-probe.js`, `ffmpeg.js`, and Task 4 tests. Task 2 and Task 3 behavior remains outside the Task 4 diff and is covered by the full reported suite.
 
@@ -82,7 +82,7 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 
 **Test validation:** Developer reported 114 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0. PM inspected the actual 25-test Task 5 suite. No GitHub Actions/status check is attached to the Task 5 commit; local test evidence is therefore the recorded execution evidence.
 
-**Known limitations recorded:** The model is not yet wired into the live player or an HTTP endpoint; `MediaCapabilities.decodingInfo()` gathering remains the browser caller's responsibility; capability granularity is codec-name level and does not yet represent profile/level/bit-depth/HDR/channel constraints; subtitles are outside this task. These are deferred by design and are not blockers for Task 5.
+**Known limitations recorded:** The model is not yet wired into the live player or HTTP endpoint; `MediaCapabilities.decodingInfo()` gathering remains the browser caller's responsibility; capability granularity is codec-name level and does not yet represent profile/level/bit-depth/HDR/channel constraints; subtitles are outside this task. These are deferred by design and are not blockers for Task 5.
 
 **PM result:** PASS / ACCEPTED. The implementation satisfies Task 5's foundation scope without prematurely implementing playback decisions.
 
@@ -110,13 +110,43 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 
 **Architectural validation:** PASS. The decision engine is stateless and has no Express, HTTP, database, scanner, UI, or FFmpeg execution dependency. It is suitable for later server integration without forcing a rewrite of the existing architecture.
 
-**Benchmark validation:** PASS for the Task 6 decision-layer scope. The capability-based hierarchy is materially stronger than the previous codec-only decision approach and establishes the required Direct Play → Remux → Audio Transcode → Video Transcode foundation. This is an internal decision-layer improvement; live playback capability remains to be integrated and validated later.
+**Benchmark validation:** PASS for the Task 6 decision-layer scope. The capability-based decision engine is a substantial improvement over the original codec whitelist and establishes the required Direct Play → Remux → Audio Transcode → Video Transcode foundation. Live playback behavior remains to be integrated and validated later.
 
 **Known limitations recorded:** Client capability granularity remains codec-name based; H.264/HEVC profile and level compatibility cannot yet be fully evaluated because those fields are not represented by the Task 4/5 contracts. Container/codec combination support is represented by a static remux compatibility table rather than per-client combination probing. Multi-stream selection is intentionally deferred; the first audio/video stream drives the current decision and counts/warnings are reported. CI is still not attached to the feature branch, so local test execution is the recorded test evidence.
 
-**PM decision:** **PASS / ACCEPTED.** No rework is required for Task 6 within its assigned scope.
+**PM decision:** **PASS / ACCEPTED.** No rework is required for Task 6 within the assigned scope.
 
 **Merge:** PENDING. No individual task is merged to `main`. D1 remains on `feature/playback` until the complete Playback workstream is finished and the final PM review passes.
+
+## Task 7 — Playback Decision Integration Boundary
+
+**Status:** PASS / ACCEPTED
+
+**Developer implementation commit:** `bbc9a5a43f3a53ac41fdb7e1b587e36edfd823b8` on `baseflicks/feature/playback`; authoritative PM inspection commit: `3adb16664412731a525de4d426379901904c9feb` on `claude_baseflicks/feature/playback`.
+
+**Developer report:** D1 reported Task 7 complete with a new `playback-integration.js`, `server.js` orchestration, new integration tests, and fixture-list updates required by the isolated server tests. Main remained unchanged and no task-level merge was performed. Developer reported 20 Task 7 tests and a complete suite of 158 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0.
+
+**Work:** Added a dedicated orchestration boundary connecting Task 4 media probing, Task 5 client capability normalization, and Task 6 playback decisions. `playback-integration.js` exposes safe capability intake, a lightweight library-row probe for the hot `/video` path, a full-probe decision path for diagnostics, and a compact probe summary. `server.js` adds `POST /api/playback/decision` and surfaces an advisory playback-mode header on `/video` without executing Remux or Transcode.
+
+**Capability intake:** The integration accepts client capabilities from the request body for the diagnostic endpoint or from the `X-Baseflix-Client-Capabilities` header / `caps` query. Missing, oversized, unparsable, or non-object values are passed as undefined and therefore normalize through Task 6 to the conservative unknown-capability result. No session/schema persistence was introduced.
+
+**Playback preservation:** The `/video` route retains the existing serving path and `serveDirectPlay()` range implementation; Task 7 only adds the advisory decision calculation and response headers. The diagnostic endpoint performs a real library-row check and full `describeMedia()` probe, while the `/video` hot path avoids an extra ffprobe by using stored codec/width/height/size fields.
+
+**Security/regression preservation:** The diagnostic endpoint reuses `resolveMediaFilePath()` and requires a real library row. Task 2 traversal protection and Task 3 Range/416/MIME behavior remain covered. The two existing isolated-runtime test fixtures were updated only to copy the newly required playback modules into the test runtime.
+
+**Code validation:** PASS. PM independently inspected the authoritative Task 7 commit and confirmed the integration module contains orchestration only, while decision rules remain in `playback-decision.js`. `server.js` delegates to the integration boundary and does not duplicate decision rules. The commit contains the expected integration files and fixture-only test adjustments; scanner, database schema, metadata, UI, FFmpeg execution, and package dependencies are outside the Task 7 change.
+
+**Important architectural observation:** The `/video` advisory decision is intentionally degraded because the scanner row does not contain all Task 4 probe fields. This is acceptable for Task 7 because the result is advisory and does not control serving. Full-fidelity ffprobe remains available through the diagnostic boundary. The first-stream limitation and static container compatibility model remain known Task 6 limitations.
+
+**Test validation:** PASS based on D1's reported complete local suite: 158 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0, including 20 Task 7 tests. The inspected Task 7 tests cover capability intake, lightweight probe construction, all four decision modes reaching the boundary, malformed/missing capabilities, injected full-probe composition, diagnostic endpoint validation, advisory `/video` headers, Task 2 containment, Task 3 range/416, and byte-preservation checks.
+
+**CI validation:** No GitHub Actions/status check is attached to the Task 7 feature commit. Local test execution is the recorded evidence.
+
+**Known limitations recorded:** Task 7 is advisory-only; Remux/Audio Transcode/Video Transcode execution is intentionally deferred. The `/video` path uses a degraded scanner-row probe without profile/level/frame-rate/pixel-format information. The diagnostic endpoint runs ffprobe per request and has no rate limiting or probe cache yet. Capabilities are request-scoped rather than persisted. Matroska/WebM disambiguation remains extension-based. These are deferred and are not blockers for Task 7.
+
+**PM decision:** **PASS / ACCEPTED.** No rework is required for Task 7 within the assigned scope.
+
+**Merge:** PENDING. No individual task is merged to `main`. D1 remains on `feature/playback` until the complete Playback workstream and final PM review are complete.
 
 ## Change Policy
 
