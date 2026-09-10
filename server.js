@@ -7,6 +7,7 @@ const db = require("./database");
 const scanner = require("./scanner");
 const ffmpeg = require("./ffmpeg");
 const poster = require("./poster");
+const { resolveMediaFilePath } = require("./media-path");
 
 const app = express();
 
@@ -232,8 +233,21 @@ const MAX_TRANSCODE_HEIGHT = 1080;
 */
 function serveDirectPlay(filePath, req, res) {
 
-    const stat =
-        fs.statSync(filePath);
+    // The callers verify existence first, but a file can still vanish
+    // (or become unreadable) between that check and this stat. Turn
+    // that into the normal not-found response rather than letting the
+    // exception surface as an uncontrolled 500.
+    let stat;
+
+    try {
+        stat =
+            fs.statSync(filePath);
+    }
+    catch (error) {
+        return res
+            .status(404)
+            .send("Video not found");
+    }
 
     const fileSize =
         stat.size;
@@ -2997,14 +3011,16 @@ app.get("/watch/:filename", (req, res) => {
     const filename =
         req.params.filename;
 
+    // Containment: the decoded segment is attacker-controlled, so
+    // resolve it through the shared media-root guard rather than
+    // path.join'ing it straight onto VIDEO_FOLDER. null => it escaped
+    // the media root (or is malformed) -- answer exactly as for a
+    // missing file, no information disclosure.
     const videoPath =
-        path.join(
-            VIDEO_FOLDER,
-            filename
-        );
+        resolveMediaFilePath(VIDEO_FOLDER, filename);
 
 
-    if (!fs.existsSync(videoPath)) {
+    if (videoPath === null || !fs.existsSync(videoPath)) {
 
         return res
             .status(404)
@@ -3205,18 +3221,21 @@ app.get("/video/:filename", (req, res) => {
     const filename =
         req.params.filename;
 
+    // Containment: the decoded segment is attacker-controlled. Both
+    // the source path and the derived cache path go through the shared
+    // media-root guard -- a null result means it resolved outside its
+    // root (traversal, absolute path, prefix sibling, symlink escape)
+    // and is treated as "not present", identical to a genuine miss.
     const videoPath =
-        path.join(
-            VIDEO_FOLDER,
-            filename
-        );
+        resolveMediaFilePath(VIDEO_FOLDER, filename);
 
 
     // Look up whether this file was flagged during scanning as
     // needing a transcode. If it hasn't been scanned yet (no row,
     // or needs_transcode is still NULL), default to direct play --
     // matches the original behavior rather than blocking playback
-    // on a probe that hasn't run yet.
+    // on a probe that hasn't run yet. The lookup is unchanged: still
+    // keyed on the raw relative_path exactly as stored by the scanner.
     const videoRow =
         db.prepare(`
             SELECT id, needs_transcode, video_codec, audio_codec, height
@@ -3230,17 +3249,18 @@ app.get("/video/:filename", (req, res) => {
 
     const cachePath =
         videoRow
-            ? path.join(
+            ? resolveMediaFilePath(
                 TRANSCODED_FOLDER,
                 ffmpeg.getTranscodedRelativePath(filename)
             )
             : null;
 
     const cacheExists =
-        cachePath &&
+        cachePath !== null &&
         fs.existsSync(cachePath);
 
     const originalExists =
+        videoPath !== null &&
         fs.existsSync(videoPath);
 
 
