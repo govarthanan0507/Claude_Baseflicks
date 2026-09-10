@@ -267,13 +267,13 @@ async function resolvePlaybackMode(params, options) {
     }
 
     if (light.mode !== MODES.DIRECT_PLAY) {
-        return { mode: light.mode, basis: "lightweight" };
+        return { mode: light.mode, basis: "lightweight", target: playbackTarget(light) };
     }
 
     if (!needsTranscode) {
         // Scanner already confirmed browser-mainstream codecs; the
         // degraded probe is sufficient to route this to Direct Play.
-        return { mode: MODES.DIRECT_PLAY, basis: "lightweight" };
+        return { mode: MODES.DIRECT_PLAY, basis: "lightweight", target: null };
     }
 
     // DIRECT_PLAY for a file the OLD whitelist rejected -> confirm with
@@ -292,22 +292,33 @@ async function resolvePlaybackMode(params, options) {
 
     const cached = decisionCacheGet(cacheKey);
     if (cached) {
-        return { mode: cached, basis: "full-probe", cached: true };
+        return { mode: cached.mode, basis: "full-probe", target: cached.target, cached: true };
     }
 
-    let fullMode;
+    let full;
     try {
         const describe =
             typeof options.describe === "function" ? options.describe : describeMedia;
         const probe = await describe(filePath);
-        fullMode = decidePlayback(probe, clientCapabilities).mode;
+        full = decidePlayback(probe, clientCapabilities);
     } catch (error) {
         // Could not verify -> do NOT claim Direct Play.
         return { mode: null, basis: "fallback", error: error.message };
     }
 
-    decisionCacheSet(cacheKey, fullMode);
-    return { mode: fullMode, basis: "full-probe" };
+    const resolved = { mode: full.mode, target: playbackTarget(full) };
+    decisionCacheSet(cacheKey, resolved);
+    return { mode: resolved.mode, basis: "full-probe", target: resolved.target };
+}
+
+// The container/codec target the decision engine already chose for a
+// transformation mode -- surfaced so the caller can hand it to the
+// remux/transcode executor WITHOUT re-deriving any capability logic.
+function playbackTarget(decision) {
+    if (!decision || typeof decision !== "object") return null;
+    if (decision.mode === MODES.REMUX && decision.remux) return decision.remux.target || null;
+    if (decision.mode === MODES.AUDIO_TRANSCODE && decision.audioTranscode) return decision.audioTranscode.target || null;
+    return null;
 }
 
 function _clearDecisionCache() {

@@ -34,7 +34,8 @@ const APP_FILES = [
     "media-probe.js",
     "playback-decision.js",
     "client-capabilities.js",
-    "playback-integration.js"
+    "playback-integration.js",
+    "remux.js"
 ];
 
 const BASE = "http://127.0.0.1:4000";

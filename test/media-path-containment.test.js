@@ -158,7 +158,8 @@ const APP_FILES = [
     "media-probe.js",
     "playback-decision.js",
     "client-capabilities.js",
-    "playback-integration.js"
+    "playback-integration.js",
+    "remux.js"
 ];
 
 const CLIP_BYTES = "CLIP_BYTES_0123456789_ABCDEFGHIJ";

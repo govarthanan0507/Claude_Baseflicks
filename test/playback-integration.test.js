@@ -184,7 +184,7 @@ test("summarizeProbe: never leaks the raw ffprobe shape", () => {
 const APP_FILES = [
     "server.js", "database.js", "scanner.js", "ffmpeg.js", "poster.js",
     "media-path.js", "media-probe.js", "playback-decision.js",
-    "client-capabilities.js", "playback-integration.js"
+    "client-capabilities.js", "playback-integration.js", "remux.js"
 ];
 
 const BASE = "http://127.0.0.1:4000";

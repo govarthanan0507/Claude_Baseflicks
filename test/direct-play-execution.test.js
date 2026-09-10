@@ -49,7 +49,9 @@ test("gate: needs_transcode=0 + DIRECT_PLAY decision -> direct_play (lightweight
         needsTranscode: false,
         clientCapabilities: FULL
     });
-    assert.deepEqual(r, { mode: MODES.DIRECT_PLAY, basis: "lightweight" });
+    assert.equal(r.mode, MODES.DIRECT_PLAY);
+    assert.equal(r.basis, "lightweight");
+    assert.equal(r.target, null);
 });
 
 test("gate: needs_transcode=0 + missing capabilities -> NOT direct_play (conservative)", async () => {
@@ -91,7 +93,8 @@ test("gate: needs_transcode=1 + DIRECT_PLAY(lightweight) -> confirmed by a full 
         { filePath: file, row: { video_codec: "hevc", audio_codec: "ac3" }, needsTranscode: true, clientCapabilities: FULL },
         { describe: cleanProbe }
     );
-    assert.deepEqual(r, { mode: MODES.DIRECT_PLAY, basis: "full-probe" });
+    assert.equal(r.mode, MODES.DIRECT_PLAY);
+    assert.equal(r.basis, "full-probe");
 
     fs.rmSync(path.dirname(file), { recursive: true, force: true });
 });
@@ -170,7 +173,7 @@ test("gate: non-DIRECT_PLAY lightweight decisions pass straight through (no ffpr
 const APP_FILES = [
     "server.js", "database.js", "scanner.js", "ffmpeg.js", "poster.js",
     "media-path.js", "media-probe.js", "playback-decision.js",
-    "client-capabilities.js", "playback-integration.js"
+    "client-capabilities.js", "playback-integration.js", "remux.js"
 ];
 
 const BASE = "http://127.0.0.1:4000";

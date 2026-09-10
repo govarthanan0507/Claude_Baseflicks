@@ -9,6 +9,7 @@ const ffmpeg = require("./ffmpeg");
 const poster = require("./poster");
 const { resolveMediaFilePath } = require("./media-path");
 const playbackIntegration = require("./playback-integration");
+const remux = require("./remux");
 
 const app = express();
 
@@ -3553,6 +3554,7 @@ app.get("/video/:filename", async (req, res) => {
     // --------------------------------------------------------
     let playbackMode = null;
     let playbackBasis = "fallback";
+    let playbackTarget = null;
 
     try {
 
@@ -3567,6 +3569,7 @@ app.get("/video/:filename", async (req, res) => {
 
         playbackMode = resolved.mode;
         playbackBasis = resolved.basis;
+        playbackTarget = resolved.target || null;
 
         if (playbackMode) {
             res.setHeader("X-Baseflix-Playback-Mode", playbackMode);
@@ -3594,6 +3597,49 @@ app.get("/video/:filename", async (req, res) => {
 
         return serveDirectPlay(videoPath, req, res);
 
+    }
+
+
+    // Task 9: the engine chose REMUX -> stream-copy the original into
+    // the client-supported container Task 6 already picked, cache it,
+    // and serve the COMPLETED file through the same hardened path (so
+    // Range/206/416 all work). AUDIO_TRANSCODE / VIDEO_TRANSCODE are
+    // NOT executed here -- they fall through to the existing logic.
+    // If the remux fails or times out, the request falls back too;
+    // it is never reported as a successful remux.
+    if (playbackMode === "remux" && originalExists && playbackTarget) {
+
+        const remuxAbort = new AbortController();
+        res.on("close", () => remuxAbort.abort());
+
+        let remuxResult = null;
+
+        try {
+            remuxResult =
+                await remux.ensureRemux({
+                    sourcePath: videoPath,
+                    relativePath: filename,
+                    container: playbackTarget,
+                    signal: remuxAbort.signal
+                });
+        }
+        catch (remuxError) {
+            console.error(
+                "Remux failed; using existing fallback:",
+                remuxError && remuxError.message
+            );
+        }
+
+        if (
+            remuxResult && remuxResult.ok &&
+            !res.writableEnded && !res.destroyed
+        ) {
+            res.setHeader("X-Baseflix-Playback", "remux");
+            res.setHeader("X-Baseflix-Playback-Target", remuxResult.container);
+            return serveDirectPlay(remuxResult.path, req, res);
+        }
+
+        // remux unavailable -> fall through to the existing behaviour
     }
 
     res.setHeader("X-Baseflix-Playback", "fallback");

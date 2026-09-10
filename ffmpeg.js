@@ -530,6 +530,114 @@ function transcodeToMp4File(inputPath, outputPath, options) {
 
 
 /*
+    STREAM-COPY REMUX to a complete file on disk (Task 9).
+
+    Repackage the primary video + primary audio into a client-friendly
+    container WITHOUT re-encoding anything:
+
+        -c:v copy  -c:a copy
+
+    No shell -- spawn() with an argv array, so `inputPath` /
+    `outputPath` are argument values, never interpolated into a
+    command string. Subtitles are dropped (`-sn`) so an mkv->mp4
+    remux never fails on a text-subtitle conversion.
+
+    Written to "<outputPath>.tmp" and renamed into place only on a
+    clean exit, so a killed / failed remux never leaves a file that
+    something else could serve as if it were complete.
+
+    options:
+      - container       "mp4" (default) | "webm"
+      - onProcessStart  called with the spawned ChildProcess so the
+                        caller can kill it (client disconnect, de-dupe)
+*/
+function remuxToFile(inputPath, outputPath, options) {
+
+    options = options || {};
+
+    return new Promise((resolve, reject) => {
+
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+
+        const muxArgs =
+            options.container === "webm"
+                ? ["-f", "webm"]
+                : ["-f", "mp4", "-movflags", "+faststart"];
+
+        const tempPath =
+            `${outputPath}.tmp`;
+
+        const ffmpeg =
+            spawn(
+                "ffmpeg",
+                [
+                    "-i", inputPath,
+
+                    // Primary video + primary audio, each optional so
+                    // a video-only or audio-only source still works.
+                    "-map", "0:v:0?",
+                    "-map", "0:a:0?",
+
+                    "-c:v", "copy",
+                    "-c:a", "copy",
+                    "-sn",
+
+                    ...muxArgs,
+
+                    "-y",
+                    tempPath
+                ]
+            );
+
+        if (typeof options.onProcessStart === "function") {
+            options.onProcessStart(ffmpeg);
+        }
+
+        let stderrOutput = "";
+
+        ffmpeg.stderr.on("data", (chunk) => {
+            stderrOutput += chunk.toString();
+        });
+
+        ffmpeg.on("error", (error) => {
+            fs.unlink(tempPath, () => {});
+            reject(error);
+        });
+
+        ffmpeg.on("close", (code, signal) => {
+
+            if (code === 0 && !signal) {
+
+                fs.rename(tempPath, outputPath, (renameError) => {
+                    if (renameError) {
+                        fs.unlink(tempPath, () => {});
+                        return reject(renameError);
+                    }
+                    resolve({});
+                });
+
+            }
+            else {
+
+                fs.unlink(tempPath, () => {});
+
+                reject(
+                    new Error(
+                        `ffmpeg remux exited code=${code} signal=${signal}: ` +
+                        stderrOutput.slice(-400)
+                    )
+                );
+
+            }
+
+        });
+
+    });
+
+}
+
+
+/*
     Transcode a file to a browser-compatible H.264/AAC stream and
     pipe the output directly into a writable stream (e.g. an
     Express response). Resolves once ffmpeg exits, rejects on
@@ -840,6 +948,7 @@ module.exports = {
     checkPlayability,
     transcodeToMp4Stream,
     transcodeToMp4File,
+    remuxToFile,
     generateThumbnail,
     getTranscodedRelativePath
 };
