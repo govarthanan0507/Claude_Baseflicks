@@ -1,9 +1,10 @@
 "use strict";
 
+const fs = require("fs");
 const path = require("path");
 
 const { describeMedia } = require("./media-probe");
-const { decidePlayback } = require("./playback-decision");
+const { decidePlayback, MODES } = require("./playback-decision");
 
 /*
     ============================================================
@@ -188,6 +189,132 @@ async function probeAndDecide(filePath, clientCapabilities, options) {
 }
 
 
+// ---- Direct Play execution gate (Task 8) -------------------
+
+/*
+    Small bounded, TTL'd, in-memory cache so a viewing session's many
+    Range requests for the same file do not re-run ffprobe. This is a
+    *decision* cache, not the transcoding cache -- it holds only the
+    resolved playback mode string.
+*/
+const DECISION_CACHE = new Map();
+const DECISION_CACHE_MAX = 500;
+const DECISION_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function decisionCacheGet(key) {
+    const entry = DECISION_CACHE.get(key);
+    if (!entry) return null;
+    if (entry.expires <= Date.now()) {
+        DECISION_CACHE.delete(key);
+        return null;
+    }
+    return entry.value;
+}
+
+function decisionCacheSet(key, value) {
+    if (DECISION_CACHE.size >= DECISION_CACHE_MAX) {
+        DECISION_CACHE.delete(DECISION_CACHE.keys().next().value);
+    }
+    DECISION_CACHE.set(key, { value: value, expires: Date.now() + DECISION_CACHE_TTL_MS });
+}
+
+function stableCapabilityKey(clientCapabilities) {
+    try {
+        return JSON.stringify(clientCapabilities) || "none";
+    } catch (error) {
+        return "unserialisable";
+    }
+}
+
+/*
+    Decide how the /video route should serve a file.
+
+    Returns { mode, basis } where basis is:
+      "lightweight" -> decided from the scanner columns only (no ffprobe)
+      "full-probe"  -> a DIRECT_PLAY candidate for a file the scanner
+                       had flagged for transcode was re-checked against
+                       a real ffprobe before being trusted
+      "fallback"    -> the decision could not be computed; caller must
+                       use its existing behaviour
+
+    Conservative rule (Task 6) is preserved end to end:
+      * missing / unknown capabilities never yield DIRECT_PLAY
+      * a DIRECT_PLAY from the DEGRADED lightweight probe is only
+        trusted directly for files the scanner already vetted as
+        browser-mainstream (needs_transcode !== 1). For a file the old
+        whitelist rejected, DIRECT_PLAY must survive a full ffprobe
+        (which can see profile / bit depth / pixel format) or it is
+        downgraded and the caller falls back.
+
+    options.describe overrides describeMedia() (tests).
+    options.now overrides Date.now for cache tests.
+*/
+async function resolvePlaybackMode(params, options) {
+
+    params = params || {};
+    options = options || {};
+
+    const filePath = params.filePath;
+    const row = params.row || null;
+    const needsTranscode = params.needsTranscode === true;
+    const clientCapabilities = params.clientCapabilities;
+
+    let light;
+    try {
+        light = decideFromLibraryRow(filePath, row, clientCapabilities);
+    } catch (error) {
+        return { mode: null, basis: "fallback", error: error.message };
+    }
+
+    if (light.mode !== MODES.DIRECT_PLAY) {
+        return { mode: light.mode, basis: "lightweight" };
+    }
+
+    if (!needsTranscode) {
+        // Scanner already confirmed browser-mainstream codecs; the
+        // degraded probe is sufficient to route this to Direct Play.
+        return { mode: MODES.DIRECT_PLAY, basis: "lightweight" };
+    }
+
+    // DIRECT_PLAY for a file the OLD whitelist rejected -> confirm with
+    // a real probe (cached) before the caller serves the original. The
+    // caller already verified existence; a stat race here just skips
+    // the cache (mtime 0) -- a failed probe below still falls back.
+    let mtime = 0;
+    try {
+        mtime = fs.statSync(filePath).mtimeMs;
+    } catch (error) {
+        mtime = 0;
+    }
+
+    const cacheKey =
+        filePath + " | " + mtime + " | " + stableCapabilityKey(clientCapabilities);
+
+    const cached = decisionCacheGet(cacheKey);
+    if (cached) {
+        return { mode: cached, basis: "full-probe", cached: true };
+    }
+
+    let fullMode;
+    try {
+        const describe =
+            typeof options.describe === "function" ? options.describe : describeMedia;
+        const probe = await describe(filePath);
+        fullMode = decidePlayback(probe, clientCapabilities).mode;
+    } catch (error) {
+        // Could not verify -> do NOT claim Direct Play.
+        return { mode: null, basis: "fallback", error: error.message };
+    }
+
+    decisionCacheSet(cacheKey, fullMode);
+    return { mode: fullMode, basis: "full-probe" };
+}
+
+function _clearDecisionCache() {
+    DECISION_CACHE.clear();
+}
+
+
 // A compact, contract-stable view of a probe for API responses --
 // never leak the raw media-probe object shape beyond what callers
 // need, and never the ffprobe document.
@@ -219,9 +346,12 @@ function summarizeProbe(probe) {
 
 
 module.exports = {
+    MODES: MODES,
     readClientCapabilities: readClientCapabilities,
     buildLightweightProbe: buildLightweightProbe,
     decideFromLibraryRow: decideFromLibraryRow,
     probeAndDecide: probeAndDecide,
-    summarizeProbe: summarizeProbe
+    resolvePlaybackMode: resolvePlaybackMode,
+    summarizeProbe: summarizeProbe,
+    _clearDecisionCache: _clearDecisionCache
 };

@@ -281,20 +281,21 @@ test("integration: decision endpoint + /video advisory header (booted server)", 
             assert.equal((await r.json()).decision.mode, MODES.VIDEO_TRANSCODE);
         });
 
-        // ---- GET /video advisory header, driven by the lightweight chain ----
-        await t.test("/video: advisory header present, bytes unchanged", async () => {
+        // ---- GET /video decision headers, driven by the chain ----
+        await t.test("/video: decision headers present, bytes unchanged", async () => {
             const r = await get("/video/clip.mp4");
             assert.equal(r.status, 200);
             assert.ok(r.headers.get("x-baseflix-playback-mode"));
-            assert.equal(r.headers.get("x-baseflix-playback-decision"), "advisory");
+            assert.ok(["direct-play", "fallback"].includes(r.headers.get("x-baseflix-playback")));
             assert.equal(r.headers.get("accept-ranges"), "bytes");
             assert.equal(r.headers.get("content-type"), "video/mp4");
             assert.ok(Buffer.from(await r.arrayBuffer()).equals(CLIP));
         });
 
-        await t.test("/video: no client caps -> conservative video_transcode advisory", async () => {
+        await t.test("/video: no client caps -> conservative, served via fallback not direct-play", async () => {
             const r = await get("/video/clip.mp4");
             assert.equal(r.headers.get("x-baseflix-playback-mode"), MODES.VIDEO_TRANSCODE);
+            assert.equal(r.headers.get("x-baseflix-playback"), "fallback");
         });
 
         await t.test("/video: client caps header -> chain yields direct_play (mp4) / remux (mkv)", async () => {

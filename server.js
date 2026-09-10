@@ -3466,7 +3466,7 @@ app.post("/api/playback/decision", async (req, res) => {
 // VIDEO STREAM
 // ============================================================
 
-app.get("/video/:filename", (req, res) => {
+app.get("/video/:filename", async (req, res) => {
 
     // Express already decodes route params (including a %2F
     // that was encoding a literal "/" within this single
@@ -3534,37 +3534,69 @@ app.get("/video/:filename", (req, res) => {
 
 
     // --------------------------------------------------------
-    // PLAYBACK DECISION -- Task 7 integration boundary.
+    // PLAYBACK DECISION -- Task 7 boundary + Task 8 Direct Play gate.
     //
-    // Runs probe(lightweight) -> capabilities -> decidePlayback and
-    // surfaces the chosen mode as a response header. It DOES NOT yet
-    // influence how the file is served -- the streaming logic below
-    // is byte-for-byte the pre-Task-7 behaviour. All decision rules
-    // live in playback-decision.js; server.js only orchestrates.
+    // probe -> capabilities -> decidePlayback, obtained ONLY through
+    // playback-integration.js (no codec/container/capability rules
+    // live here). When -- and only when -- the decision engine
+    // EXPLICITLY returns DIRECT_PLAY, the request is routed onto the
+    // hardened Task 3 serveDirectPlay() path for the original file.
     //
-    // Wrapped so a fault here can never affect playback.
+    // REMUX / AUDIO_TRANSCODE / VIDEO_TRANSCODE are NOT executed here:
+    // any non-DIRECT_PLAY decision -- and any failure to decide --
+    // falls through to the existing playback logic below, unchanged.
+    //
+    // Conservative rule (Task 6) is preserved: missing / unknown
+    // capabilities never produce DIRECT_PLAY, so such a request takes
+    // the existing safe fallback rather than a decision-gated direct
+    // serve.
     // --------------------------------------------------------
+    let playbackMode = null;
+    let playbackBasis = "fallback";
+
     try {
 
-        const decision =
-            playbackIntegration.decideFromLibraryRow(
-                videoPath || (cacheExists ? cachePath : null),
-                videoRow,
-                playbackIntegration.readClientCapabilities(req)
-            );
+        const resolved =
+            await playbackIntegration.resolvePlaybackMode({
+                filePath: videoPath || (cacheExists ? cachePath : null),
+                row: videoRow,
+                needsTranscode: needsTranscode,
+                clientCapabilities:
+                    playbackIntegration.readClientCapabilities(req)
+            });
 
-        res.setHeader("X-Baseflix-Playback-Mode", decision.mode);
-        res.setHeader("X-Baseflix-Playback-Decision", "advisory");
+        playbackMode = resolved.mode;
+        playbackBasis = resolved.basis;
+
+        if (playbackMode) {
+            res.setHeader("X-Baseflix-Playback-Mode", playbackMode);
+        }
 
     }
     catch (decisionError) {
 
         console.error(
-            "Playback decision (advisory) failed; streaming unaffected:",
+            "Playback decision failed; using existing fallback:",
             decisionError.message
         );
 
     }
+
+
+    // Task 8: the engine explicitly permits Direct Play -> serve the
+    // ORIGINAL file through the hardened path. (If the original was
+    // moved out and only a cache exists, fall through -- the existing
+    // logic serves the cache.)
+    if (playbackMode === "direct_play" && originalExists) {
+
+        res.setHeader("X-Baseflix-Playback", "direct-play");
+        res.setHeader("X-Baseflix-Playback-Basis", playbackBasis);
+
+        return serveDirectPlay(videoPath, req, res);
+
+    }
+
+    res.setHeader("X-Baseflix-Playback", "fallback");
 
 
     if (!needsTranscode) {
