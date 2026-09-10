@@ -177,7 +177,23 @@ async function ensureAudioTranscode(params, options) {
 
     if (!entry) {
 
-        entry = { proc: null, waiters: 0, promise: null };
+        entry = { proc: null, waiters: 0, cancelled: false, promise: null };
+
+        // If the last waiter has ALREADY gone by the time ffmpeg
+        // registers its process, kill it immediately -- this closes
+        // the abort-before-onProcessStart race.
+        const killIfDoomed = () => {
+            if (
+                entry.cancelled &&
+                entry.proc &&
+                entry.proc.exitCode === null &&
+                !entry.proc.killed
+            ) {
+                entry.proc.kill("SIGKILL");
+            }
+        };
+
+        entry.killIfDoomed = killIfDoomed;
 
         entry.promise = (async () => {
 
@@ -188,7 +204,7 @@ async function ensureAudioTranscode(params, options) {
                 await run(sourcePath, target.cachePath, {
                     container: container,
                     audioCodec: audioCodec,
-                    onProcessStart: (proc) => { entry.proc = proc; }
+                    onProcessStart: (proc) => { entry.proc = proc; killIfDoomed(); }
                 });
 
                 if (!fs.existsSync(target.cachePath)) {
@@ -220,22 +236,52 @@ async function ensureAudioTranscode(params, options) {
         inFlight.set(target.key, entry);
     }
 
+    // ---- waiter lifecycle ------------------------------------
+    // A request is a "waiter" from here until it aborts, times out,
+    // or completes. It increments the count EXACTLY once and
+    // decrements it EXACTLY once -- `release()` is guarded so the
+    // abort listener and the finally block can never double-count.
+    // When the count hits zero (last waiter left, for ANY reason) the
+    // ffmpeg job is cancelled: killed if it is running, or armed so
+    // onProcessStart kills it the instant it appears.
     entry.waiters += 1;
 
-    const onAbort = () => {
+    let released = false;
+
+    const release = () => {
+
+        if (released) {
+            return;
+        }
+        released = true;
+
         entry.waiters -= 1;
-        if (entry.waiters <= 0 && entry.proc && entry.proc.exitCode === null && !entry.proc.killed) {
-            entry.proc.kill("SIGKILL");
+
+        if (entry.waiters <= 0) {
+            entry.cancelled = true;
+            entry.killIfDoomed();
         }
     };
 
-    if (signal) {
+    let onAbort = null;
+
+    const abortPromise = new Promise((resolve) => {
+
+        if (!signal) {
+            return;   // stays pending forever -> never wins the race
+        }
+
+        onAbort = () => {
+            release();
+            resolve({ ok: false, aborted: true });
+        };
+
         if (signal.aborted) {
             onAbort();
         } else {
             signal.addEventListener("abort", onAbort, { once: true });
         }
-    }
+    });
 
     let timer = null;
     const timeoutPromise = new Promise((resolve) => {
@@ -244,11 +290,14 @@ async function ensureAudioTranscode(params, options) {
     });
 
     try {
-        return await Promise.race([entry.promise, timeoutPromise]);
+        return await Promise.race([entry.promise, timeoutPromise, abortPromise]);
     }
     finally {
         if (timer) clearTimeout(timer);
-        if (signal) signal.removeEventListener("abort", onAbort);
+        if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+        // Normal-completion and timeout exits release here; an abort
+        // has already released via onAbort, so this is then a no-op.
+        release();
     }
 }
 

@@ -143,17 +143,142 @@ test("ensureAudioTranscode: last-waiter abort kills the job and cleans up", asyn
     fs.rmSync(path.dirname(src), { recursive: true, force: true });
 });
 
-test("ensureAudioTranscode: slow request times out but the job keeps running for the next", async () => {
-    const src = srcFile("slow.mkv", Buffer.alloc(64));
-    const run = async (i, o, op) => { await new Promise(r => setTimeout(r, 120)); fs.writeFileSync(o, "DONE"); };
-    const first = await at.ensureAudioTranscode({ sourcePath: src, relativePath: "slow.mkv", container: "mp4", audioCodec: "aac" }, { run, timeoutMs: 40 });
-    assert.equal(first.ok, false);
-    assert.equal(first.timedOut, true);
-    await new Promise(r => setTimeout(r, 150));
-    const second = await at.ensureAudioTranscode({ sourcePath: src, relativePath: "slow.mkv", container: "mp4", audioCodec: "aac" }, { run, timeoutMs: 40 });
-    assert.equal(second.ok, true);
-    assert.equal(second.reused, true);
-    fs.rmSync(second.path, { force: true });
+// ---- waiter / abort lifecycle regressions -------------------
+const tick = () => new Promise(r => setTimeout(r, 15));
+
+/*
+    A controllable fake ffmpeg run:
+      handle.register()  -> calls onProcessStart with a fake proc
+      handle.finish()    -> writes the output + resolves the job
+      handle.proc.killed -> observe whether the job was killed
+    (register() defaults to NOT being called, so the
+     abort-before-onProcessStart race is exercisable.)
+*/
+function controllableRun(opts) {
+    opts = opts || {};
+    const handle = { proc: null, register: null, finish: null, calls: 0 };
+    handle.run = (input, output, op) => new Promise((resolve, reject) => {
+        handle.calls += 1;
+        handle.proc = {
+            exitCode: null, killed: false,
+            kill() { this.killed = true; this.exitCode = null; reject(new Error("killed")); }
+        };
+        handle.register = () => op.onProcessStart(handle.proc);
+        handle.finish = () => { fs.writeFileSync(output, "DONE"); handle.proc.exitCode = 0; resolve(); };
+        if (opts.autoRegister !== false) handle.register();
+    });
+    return handle;
+}
+
+test("lifecycle: abort BEFORE onProcessStart -> job killed the instant the process appears", async () => {
+    const src = srcFile("pre.mkv");
+    const h = controllableRun({ autoRegister: false });
+    const ac = new AbortController();
+    const p = at.ensureAudioTranscode(
+        { sourcePath: src, relativePath: "pre.mkv", container: "mp4", audioCodec: "aac", signal: ac.signal },
+        { run: h.run, timeoutMs: 2000 }
+    );
+    await tick();
+    ac.abort();                          // last (only) waiter leaves; proc not registered yet
+    await tick();
+    assert.equal(h.proc.killed, false, "nothing to kill before the process registers");
+    h.register();                        // ffmpeg 'appears'
+    await tick();
+    assert.equal(h.proc.killed, true, "cancelled job is killed as soon as the process registers");
+    assert.equal((await p).ok, false);
+    fs.rmSync(path.dirname(src), { recursive: true, force: true });
+});
+
+test("lifecycle: ALL waiters disappear before ffmpeg starts -> process killed on arrival", async () => {
+    const src = srcFile("allgone.mkv");
+    const h = controllableRun({ autoRegister: false });
+    const ac1 = new AbortController();
+    const ac2 = new AbortController();
+    const params = { sourcePath: src, relativePath: "allgone.mkv", container: "mp4", audioCodec: "aac" };
+    const p1 = at.ensureAudioTranscode({ ...params, signal: ac1.signal }, { run: h.run, timeoutMs: 2000 });
+    const p2 = at.ensureAudioTranscode({ ...params, signal: ac2.signal }, { run: h.run, timeoutMs: 2000 });
+    await tick();
+    assert.equal(h.calls, 1, "two requests, one ffmpeg job");
+    ac1.abort();
+    ac2.abort();
+    await tick();
+    h.register();
+    await tick();
+    assert.equal(h.proc.killed, true);
+    await Promise.all([p1, p2]);
+    fs.rmSync(path.dirname(src), { recursive: true, force: true });
+});
+
+test("lifecycle: two waiters, ONE aborts, the other remains -> ffmpeg continues", async () => {
+    const src = srcFile("stay.mkv");
+    const h = controllableRun();                      // process registers immediately
+    const ac1 = new AbortController();
+    const params = { sourcePath: src, relativePath: "stay.mkv", container: "mp4", audioCodec: "aac" };
+    const p1 = at.ensureAudioTranscode({ ...params, signal: ac1.signal }, { run: h.run, timeoutMs: 2000 });
+    const p2 = at.ensureAudioTranscode({ ...params }, { run: h.run, timeoutMs: 2000 });
+    await tick();
+    ac1.abort();
+    await tick();
+    assert.equal(h.proc.killed, false, "a waiter still remains -> job not killed");
+    h.finish();
+    const r2 = await p2;
+    assert.equal(r2.ok, true, "the remaining waiter gets the completed output");
+    assert.equal(h.proc.killed, false);
+    fs.rmSync(r2.path, { force: true });
+    fs.rmSync(path.dirname(src), { recursive: true, force: true });
+});
+
+test("lifecycle: a timed-out request is not a phantom waiter (job dies once the real last waiter leaves)", async () => {
+    const src = srcFile("phantom.mkv");
+    const h = controllableRun();                      // registers, never finishes on its own
+    const acB = new AbortController();
+    const params = { sourcePath: src, relativePath: "phantom.mkv", container: "mp4", audioCodec: "aac" };
+    const pA = at.ensureAudioTranscode({ ...params }, { run: h.run, timeoutMs: 30 });
+    const pB = at.ensureAudioTranscode({ ...params, signal: acB.signal }, { run: h.run, timeoutMs: 5000 });
+    const a = await pA;
+    assert.equal(a.timedOut, true);
+    await tick();
+    assert.equal(h.proc.killed, false, "B is still genuinely waiting -> ffmpeg keeps running");
+    acB.abort();                                      // the only real waiter leaves
+    await tick();
+    assert.equal(h.proc.killed, true, "A timed out + B aborted -> zero waiters -> ffmpeg killed");
+    await pB;
+    fs.rmSync(path.dirname(src), { recursive: true, force: true });
+});
+
+test("lifecycle: timeout as the LAST waiter cancels the ffmpeg job", async () => {
+    const src = srcFile("tolast.mkv");
+    const h = controllableRun();                      // registers, never finishes
+    const r = await at.ensureAudioTranscode(
+        { sourcePath: src, relativePath: "tolast.mkv", container: "mp4", audioCodec: "aac" },
+        { run: h.run, timeoutMs: 30 }
+    );
+    assert.equal(r.timedOut, true);
+    await tick();
+    assert.equal(h.proc.killed, true, "no one waiting after the timeout -> job killed");
+    fs.rmSync(path.dirname(src), { recursive: true, force: true });
+});
+
+test("lifecycle: normal successful completion leaves waiter/job state clean", async () => {
+    const src = srcFile("norm.mkv");
+    const h = controllableRun();
+    const params = { sourcePath: src, relativePath: "norm.mkv", container: "mp4", audioCodec: "aac" };
+    const p = at.ensureAudioTranscode({ ...params }, { run: h.run, timeoutMs: 2000 });
+    await tick();
+    h.finish();
+    const r = await p;
+    assert.equal(r.ok, true);
+    assert.equal(r.reused, false);
+    assert.equal(h.proc.killed, false, "a completed job is not killed");
+    assert.equal(at._activeJobCount(), 0, "in-flight registry is emptied");
+
+    // state is not corrupted -> the next request cleanly reuses the file
+    const again = await at.ensureAudioTranscode({ ...params }, { run: h.run, timeoutMs: 2000 });
+    assert.equal(again.ok, true);
+    assert.equal(again.reused, true);
+    assert.equal(h.calls, 1, "no second ffmpeg run");
+
+    fs.rmSync(r.path, { force: true });
     fs.rmSync(path.dirname(src), { recursive: true, force: true });
 });
 
