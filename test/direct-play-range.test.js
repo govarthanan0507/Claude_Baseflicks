@@ -29,7 +29,12 @@ const APP_FILES = [
     "scanner.js",
     "ffmpeg.js",
     "poster.js",
-    "media-path.js"
+    "media-path.js",
+    // server.js requires these transitively (Task 4-7 modules).
+    "media-probe.js",
+    "playback-decision.js",
+    "client-capabilities.js",
+    "playback-integration.js"
 ];
 
 const BASE = "http://127.0.0.1:4000";

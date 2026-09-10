@@ -8,6 +8,7 @@ const scanner = require("./scanner");
 const ffmpeg = require("./ffmpeg");
 const poster = require("./poster");
 const { resolveMediaFilePath } = require("./media-path");
+const playbackIntegration = require("./playback-integration");
 
 const app = express();
 
@@ -3393,6 +3394,75 @@ app.get("/watch/:filename", (req, res) => {
 
 
 // ============================================================
+// PLAYBACK DECISION (diagnostic)  -- Task 7
+//
+// probe -> capabilities -> decidePlayback, returned as JSON. This is
+// how the server RECEIVES normalized client capability information
+// (request body `client`, or the X-Baseflix-Client-Capabilities
+// header / ?caps= query) and how a caller can inspect what the
+// engine would choose. It performs NO remux/transcode and does not
+// change how /video streams. All rules live in playback-decision.js.
+// ============================================================
+
+app.post("/api/playback/decision", async (req, res) => {
+
+    try {
+
+        const requested =
+            (req.body && typeof req.body.path === "string") ? req.body.path : "";
+
+        if (!requested) {
+            return res
+                .status(400)
+                .json({ error: "A media 'path' (relative_path) is required" });
+        }
+
+        // Task 2 containment -- identical guard to /video and /watch.
+        const mediaPath =
+            resolveMediaFilePath(VIDEO_FOLDER, requested);
+
+        // Only decide for files that are actually in the library.
+        const row =
+            db.prepare(`
+                SELECT id, relative_path, video_codec, audio_codec, width, height, size
+                FROM videos
+                WHERE relative_path = ?
+            `).get(requested);
+
+        if (mediaPath === null || !row || !fs.existsSync(mediaPath)) {
+            return res
+                .status(404)
+                .json({ error: "Media not found" });
+        }
+
+        const clientCapabilities =
+            (req.body && req.body.client !== undefined)
+                ? req.body.client
+                : playbackIntegration.readClientCapabilities(req);
+
+        const result =
+            await playbackIntegration.probeAndDecide(mediaPath, clientCapabilities);
+
+        res.json({
+            decision: result.decision,
+            media: playbackIntegration.summarizeProbe(result.probe)
+        });
+
+    }
+    catch (error) {
+
+        console.error("Playback decision endpoint failed:", error);
+
+        res
+            .status(500)
+            .json({ error: "Could not compute a playback decision" });
+
+    }
+
+});
+
+
+// ============================================================
 // VIDEO STREAM
 // ============================================================
 
@@ -3423,7 +3493,7 @@ app.get("/video/:filename", (req, res) => {
     // keyed on the raw relative_path exactly as stored by the scanner.
     const videoRow =
         db.prepare(`
-            SELECT id, needs_transcode, video_codec, audio_codec, height
+            SELECT id, needs_transcode, video_codec, audio_codec, width, height, size
             FROM videos
             WHERE relative_path = ?
         `).get(filename);
@@ -3459,6 +3529,40 @@ app.get("/video/:filename", (req, res) => {
         return res
             .status(404)
             .send("Video not found");
+
+    }
+
+
+    // --------------------------------------------------------
+    // PLAYBACK DECISION -- Task 7 integration boundary.
+    //
+    // Runs probe(lightweight) -> capabilities -> decidePlayback and
+    // surfaces the chosen mode as a response header. It DOES NOT yet
+    // influence how the file is served -- the streaming logic below
+    // is byte-for-byte the pre-Task-7 behaviour. All decision rules
+    // live in playback-decision.js; server.js only orchestrates.
+    //
+    // Wrapped so a fault here can never affect playback.
+    // --------------------------------------------------------
+    try {
+
+        const decision =
+            playbackIntegration.decideFromLibraryRow(
+                videoPath || (cacheExists ? cachePath : null),
+                videoRow,
+                playbackIntegration.readClientCapabilities(req)
+            );
+
+        res.setHeader("X-Baseflix-Playback-Mode", decision.mode);
+        res.setHeader("X-Baseflix-Playback-Decision", "advisory");
+
+    }
+    catch (decisionError) {
+
+        console.error(
+            "Playback decision (advisory) failed; streaming unaffected:",
+            decisionError.message
+        );
 
     }
 
