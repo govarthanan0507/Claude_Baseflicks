@@ -54,14 +54,33 @@ test("gate: needs_transcode=0 + DIRECT_PLAY decision -> direct_play (lightweight
     assert.equal(r.target, null);
 });
 
-test("gate: needs_transcode=0 + missing capabilities -> NOT direct_play (conservative)", async () => {
+test("gate: needs_transcode=0 + NO capability object -> direct_play fast-path (Task 14)", async () => {
+    // Task 14 regression fix: the scanner already vetted these codecs
+    // (needs_transcode === 0). When the caller supplies NO capability
+    // object at all (clientCapabilities === undefined -- a genuinely
+    // absent header), route straight to Direct Play instead of letting
+    // the conservative engine fall to VIDEO_TRANSCODE and start FFmpeg.
     const r = await integration.resolvePlaybackMode({
         filePath: "/lib/a.mp4",
         row: { video_codec: "h264", audio_codec: "aac" },
         needsTranscode: false,
         clientCapabilities: undefined
     });
-    assert.equal(r.mode, MODES.VIDEO_TRANSCODE);
+    assert.equal(r.mode, MODES.DIRECT_PLAY);
+    assert.equal(r.basis, "lightweight");
+    assert.equal(r.target, null);
+});
+
+test("gate: needs_transcode=1 + NO capability object -> fast-path does NOT apply (unchanged)", async () => {
+    // Task 14 must NOT change the flagged-file path: a file the scanner
+    // marked needs_transcode = 1 still goes through the full re-check /
+    // conservative decision, never the no-capability Direct Play shortcut.
+    const r = await integration.resolvePlaybackMode({
+        filePath: "/lib/a.mp4",
+        row: { video_codec: "hevc", audio_codec: "aac" },
+        needsTranscode: true,
+        clientCapabilities: undefined
+    }, { describe: async () => ({ ok: false, error: "probe_failed" }) });
     assert.notEqual(r.mode, MODES.DIRECT_PLAY);
 });
 
@@ -291,19 +310,24 @@ test("Task 8 route: DIRECT_PLAY decision controls /video; other modes fall back"
             assert.equal(r.headers.get("x-baseflix-playback"), null);
         });
 
-        // ---- conservative: no / bad caps must NOT claim Direct Play ----
-        await t.test("missing capabilities -> NOT direct-play, existing fallback still serves", async () => {
+        // ---- Task 14: NO capability header + needs_transcode=0 -> Direct Play ----
+        await t.test("no capability header + needs_transcode=0 -> direct-play, no transcode (Task 14)", async () => {
             const r = await get("/video/clip.mp4");
             assert.equal(r.status, 200);
-            assert.equal(r.headers.get("x-baseflix-playback-mode"), MODES.VIDEO_TRANSCODE);
-            assert.equal(r.headers.get("x-baseflix-playback"), "fallback");
+            assert.equal(r.headers.get("x-baseflix-playback-mode"), MODES.DIRECT_PLAY);
+            assert.equal(r.headers.get("x-baseflix-playback"), "direct-play");
             assert.ok(Buffer.from(await r.arrayBuffer()).equals(CLIP));
         });
 
-        await t.test("malformed capabilities -> NOT direct-play, no crash", async () => {
+        // Case D (see PLAYBACK regression report): readClientCapabilities()
+        // returns `undefined` for BOTH a genuinely absent header and a
+        // malformed one, so a malformed header now also takes the Task 14
+        // no-capability Direct Play fast-path for a needs_transcode=0 file.
+        // Still 200, still the original bytes, still no crash.
+        await t.test("malformed capability header + needs_transcode=0 -> direct-play, no crash (Case D)", async () => {
             const r = await get("/video/clip.mp4", { "x-baseflix-client-capabilities": "}{ not json" });
             assert.equal(r.status, 200);
-            assert.equal(r.headers.get("x-baseflix-playback"), "fallback");
+            assert.equal(r.headers.get("x-baseflix-playback"), "direct-play");
             assert.ok(Buffer.from(await r.arrayBuffer()).equals(CLIP));
         });
 
@@ -351,17 +375,20 @@ test("Task 8 route: DIRECT_PLAY decision controls /video; other modes fall back"
         });
 
         await t.test("chain: probe(row) -> capabilities -> decidePlayback -> Task7 boundary -> Task8 gate", async () => {
-            // same file, three capability inputs, three routed outcomes
+            // same file (needs_transcode=0), three capability inputs, three routed outcomes.
+            // - no header      -> Task 14 no-capability Direct Play fast-path
+            // - mp4-only caps  -> capability decision: mkv container unsupported -> REMUX (not executed here: fallback)
+            // - mp4+mkv caps   -> capability decision: DIRECT_PLAY
             const none = await get("/video/movie.mkv");
             const mp4only = await get("/video/movie.mkv", caps(MP4_CAPS));
             const withMkv = await get("/video/movie.mkv", caps(MKV_CAPS));
             assert.deepEqual(
                 [none.headers.get("x-baseflix-playback"), mp4only.headers.get("x-baseflix-playback"), withMkv.headers.get("x-baseflix-playback")],
-                ["fallback", "fallback", "direct-play"]
+                ["direct-play", "fallback", "direct-play"]
             );
             assert.deepEqual(
                 [none.headers.get("x-baseflix-playback-mode"), mp4only.headers.get("x-baseflix-playback-mode"), withMkv.headers.get("x-baseflix-playback-mode")],
-                [MODES.VIDEO_TRANSCODE, MODES.REMUX, MODES.DIRECT_PLAY]
+                [MODES.DIRECT_PLAY, MODES.REMUX, MODES.DIRECT_PLAY]
             );
         });
 

@@ -288,10 +288,14 @@ test("integration: decision endpoint + /video advisory header (booted server)", 
             assert.ok(Buffer.from(await r.arrayBuffer()).equals(CLIP));
         });
 
-        await t.test("/video: no client caps -> conservative, served via fallback not direct-play", async () => {
+        await t.test("/video: no client caps + needs_transcode=0 -> Direct Play fast-path (Task 14)", async () => {
+            // The scanner already vetted clip.mp4's codecs (needs_transcode=0);
+            // with no capability header the request goes straight to Direct
+            // Play instead of the conservative VIDEO_TRANSCODE that Task 12
+            // would otherwise execute.
             const r = await get("/video/clip.mp4");
-            assert.equal(r.headers.get("x-baseflix-playback-mode"), MODES.VIDEO_TRANSCODE);
-            assert.equal(r.headers.get("x-baseflix-playback"), "fallback");
+            assert.equal(r.headers.get("x-baseflix-playback-mode"), MODES.DIRECT_PLAY);
+            assert.equal(r.headers.get("x-baseflix-playback"), "direct-play");
         });
 
         await t.test("/video: client caps header -> chain yields direct_play (mp4) / remux (mkv)", async () => {

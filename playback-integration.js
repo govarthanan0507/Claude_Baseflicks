@@ -455,6 +455,34 @@ async function resolvePlaybackMode(params, options) {
         return { mode: null, basis: "fallback", error: error.message };
     }
 
+    // ---- no-capability fast-path (Task 14 regression fix) ----
+    // The scanner's own ffprobe-backed checkPlayability() has already
+    // vetted this file's codecs as browser-mainstream (needs_transcode
+    // === 0). When the caller supplies NO capability object at all
+    // (clientCapabilities === undefined -- a genuinely absent header,
+    // per readClientCapabilities()), the degraded library-row probe
+    // carries no information that could legitimately override the
+    // scanner's verdict, and the conservative engine would otherwise
+    // fall all the way to VIDEO_TRANSCODE. That used to be a harmless
+    // advisory string; since Task 12 wired an executor to it, it starts
+    // a full FFmpeg re-encode of a natively-playable file and stalls
+    // playback for ~45s. Route such a request straight to Direct Play,
+    // exactly as the pre-playback-pipeline /video handler did.
+    //
+    // This is deliberately `=== undefined` (no object supplied), NOT a
+    // general "falsy / unusable capabilities" test: a caller that hands
+    // us an actual object -- even an empty or malformed one -- is left
+    // on the conservative path unchanged.
+    if (!needsTranscode && clientCapabilities === undefined) {
+        return {
+            mode: MODES.DIRECT_PLAY,
+            basis: "lightweight",
+            target: null,
+            videoCodec: null,
+            audioCodec: null
+        };
+    }
+
     if (light.mode !== MODES.DIRECT_PLAY) {
         return Object.assign(
             { mode: light.mode, basis: "lightweight", audioStreamIndex: null },
