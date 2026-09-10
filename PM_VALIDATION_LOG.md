@@ -130,7 +130,39 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 
 **PM decision:** **PASS / ACCEPTED.** Task 5 meets the requested capability-model foundation and preserves the boundary against premature playback decision logic.
 
-**Merge policy:** No task-level merge. Task 5 remains on `feature/playback`. PM will reconcile branch divergence and merge only after all D1 tasks are complete and the final full D1 review passes.
+**Merge policy:** No task-level merge. Task 5 remains on `feature/playback` until all D1 tasks are complete and the final full-workstream review passes.
+
+## Task 6 — Capability-Based Playback Decision Engine
+
+**Developer implementation commit:** `e8d7629495d50b99ccec5c450acb8dc558e96596` on `baseflicks/feature/playback`.
+
+**Authoritative PM branch tip inspected:** `4f1b3aa5a3cece3f57c788aa2f2a56b9856d7aa3` on `claude_baseflicks/feature/playback`.
+
+**Developer response:** D1 reported Task 6 complete and stopped as instructed. The report supplied the exact changed-file list, decision contract, hierarchy, conservative handling, limitations, and full-suite result of 138 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0.
+
+**Scope validation:** PASS. PM independently inspected the actual Task 6 commit and confirmed exactly two added files: `playback-decision.js` and `test/playback-decision.test.js`. The commit has no `server.js`, `/video` route, `ffmpeg.js`, transcode-job, cache, scanner, database, metadata, player/library UI, HTTP API, `package.json`, or dependency changes.
+
+**Code validation:** PASS. `decidePlayback(media, client)` normalizes the client through Task 5, consumes the Task 4 media description, resolves the container, canonicalizes media codecs, evaluates Direct Play → Remux → Audio Transcode → Video Transcode in order, and returns a deeply frozen result. The engine is stateless and contains no filesystem, HTTP, Express, database, scanner, browser, or FFmpeg execution dependency. The source/client summaries, blockers, reasons, targets, and warnings match the intended decision-layer contract.
+
+**Conservative validation:** PASS. Unknown client capabilities are not promoted to support. The inspected implementation explicitly distinguishes supported, unsupported, and unknown states and blocks copy-based modes when required capability information is unknown. The H.264 + client-H.264-unknown case is explicitly covered by the tests.
+
+**Media/stream validation:** PASS for the assigned scope. Container resolution uses extension first with ffprobe format fallback. Resolution ceilings and deterministic high-bit-depth/non-4:2:0 checks can block copying. Audio-only and video-only media are handled. Multiple stream counts are reported and warnings are emitted; the current decision uses the first audio/video stream as the primary stream, as deliberately documented by the implementation.
+
+**Hierarchy validation:** PASS. The implementation does not let an unsupported audio track fall through directly to Video Transcode when copyable video plus a supported target audio/container can satisfy Audio Transcode. Conversely, unsupported video/resolution/exotic-video blockers prevent Audio Transcode and force Video Transcode.
+
+**Test validation:** PASS based on D1's reported complete local suite: 138 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0, including 24 Task 6 tests. PM inspected the actual Task 6 test file and confirmed coverage for Direct Play, unsupported video/audio, Remux including WebM-only targeting, unsupported container + unsupported video, unknown and partial clients, resolution limits, exotic video, audio-only/video-only, multi-stream warnings, malformed inputs, determinism, container resolution, and end-to-end Task 4 → Task 5 → Task 6 composition.
+
+**Regression validation:** PASS. Task 2–5 implementations remain intact and the Task 6 commit is additive. No prior playback hardening or model files were overwritten.
+
+**Benchmark validation:** PASS for the decision-layer scope. The new capability-based decision engine is a substantial improvement over the original codec whitelist and establishes the required Jellyfin/Plex-level capability foundation. Live playback behavior has not yet changed and therefore still requires integration and runtime validation.
+
+**CI validation:** No GitHub Actions/status check is attached to the Task 6 commit. Local test execution is the recorded evidence for the reported 138 passing tests.
+
+**Known limitations recorded:** Capability granularity is still codec-name based; profile/level compatibility is not fully represented. Remux container/codec combinations use a static compatibility table rather than client-specific combination probing. Multi-stream selection is deferred; first-stream selection is currently intentional and warnings/counts expose the limitation. Live route integration and actual remux/transcode execution are not part of Task 6.
+
+**PM decision:** **PASS / ACCEPTED.** No rework is required for Task 6 within the assigned scope.
+
+**Merge decision:** **PENDING.** No individual D1 task is merged to `main`. PM will reconcile branch divergence and perform the final merge only after the complete Playback workstream passes its final review.
 
 ## PM Merge Policy
 
