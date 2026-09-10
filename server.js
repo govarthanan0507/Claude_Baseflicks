@@ -262,7 +262,9 @@ function mediaContentType(filePath) {
     Classification -- first matching rule wins:
        1. no header ................................... full
        2. unit is not "bytes=" ....................... full  (unsupported unit)
-       3. more than one comma-separated spec ........ full  (multi-range)
+       3. header contains a comma ................... full  (multi-range,
+          OR list syntax with an empty element like "0-99," / ",0-99" --
+          either way it is not a single range and we never emit a 206)
        4. spec is not "<digits>-<digits>" ........... full  (malformed)
           (both sides empty also counts as malformed)
        5. suffix form  "-N"  (final N bytes):
@@ -290,19 +292,27 @@ function parseByteRange(rangeHeader, fileSize) {
         return { kind: "full" };
     }
 
-    const specs =
-        unitMatch[1]
-            .split(",")
-            .map(spec => spec.trim())
-            .filter(spec => spec.length > 0);
+    // Any comma means a byte-range-SET (multiple ranges), or a
+    // malformed list with an empty element ("bytes=0-99,", ",0-99",
+    // "0-99,,"). We never build multipart/byteranges, and a partial
+    // response to a list-shaped header would be wrong -- so treat the
+    // whole class as "serve the full file", never a 206. Splitting and
+    // filtering out the empty elements first (as the old code did)
+    // would silently let a trailing-comma header through as one range.
+    if (unitMatch[1].indexOf(",") !== -1) {
+        return { kind: "full" };
+    }
 
-    if (specs.length !== 1) {
-        // Zero specs ("bytes=") or two-plus (multi-range) -> whole file.
+    const spec =
+        unitMatch[1].trim();
+
+    if (spec.length === 0) {
+        // "bytes=" with nothing after it.
         return { kind: "full" };
     }
 
     const rangeMatch =
-        specs[0].match(/^(\d*)-(\d*)$/);
+        spec.match(/^(\d*)-(\d*)$/);
 
     if (!rangeMatch) {
         return { kind: "full" };

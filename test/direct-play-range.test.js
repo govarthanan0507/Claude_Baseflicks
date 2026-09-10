@@ -235,16 +235,29 @@ test("direct-play range + MIME hardening (integration)", async (t) => {
         });
 
         // ---------------------------------------------------------
-        // MULTIPLE RANGES -> safe 200 full file
+        // MULTIPLE RANGES + LIST SYNTAX -> safe 200 full file
+        // (a comma-shaped header must NEVER become a 206, even when
+        //  only one element is actually valid: "bytes=0-99," etc.)
         // ---------------------------------------------------------
-        await t.test("bytes=0-99,200-299 -> 200 full file (no multipart)", async () => {
-            const r = await get("/video/clip.mp4", { Range: "bytes=0-99,200-299" });
-            assert.equal(r.status, 200);
-            assert.equal(r.headers.get("content-length"), String(CLIP.length));
-            assert.equal(r.headers.get("accept-ranges"), "bytes");
-            assert.equal(r.headers.get("content-range"), null);
-            assert.ok((await body(r)).equals(CLIP));
-        });
+        for (const listHeader of [
+            "bytes=0-99,200-299",   // genuine multi-range
+            "bytes=0-99,",          // trailing comma
+            "bytes=,0-99",          // leading comma
+            "bytes=0-99,,",         // double trailing comma
+            "bytes=0-99 ,",         // whitespace + trailing comma
+            "bytes=0-99,abc"        // one valid + one junk element
+        ]) {
+            await t.test(`list-shaped "${listHeader}" -> 200 full file, never 206`, async () => {
+                const r = await get("/video/clip.mp4", { Range: listHeader });
+                assert.equal(r.status, 200);
+                assert.equal(r.headers.get("content-length"), String(CLIP.length));
+                assert.equal(r.headers.get("accept-ranges"), "bytes");
+                assert.equal(r.headers.get("content-range"), null);
+                const b = await body(r);
+                assert.equal(b.length, CLIP.length);
+                assert.ok(b.equals(CLIP));
+            });
+        }
 
         // ---------------------------------------------------------
         // MALFORMED / UNSUPPORTED -> safe 200 full file
