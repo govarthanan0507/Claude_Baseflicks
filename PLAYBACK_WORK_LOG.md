@@ -50,7 +50,7 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 
 **Status:** PASS / ACCEPTED
 
-**Developer commit:** `f5049fd97f564658bcd3f26f684e967a803e9424` on `claude_baseflicks/feature/playback` (equivalent implementation commit `d4089cba9efc30da6611ff6ec1066455ca73fd98` on `baseflicks/feature/playback`).
+**Developer commit:** `f5049fd97f564658bcd3f26f684e967a803e9424` on `claude_baseflicks/feature/playback` (equivalent implementation commit `d4089cba9efc30da6611ff6ec1066455ca73fd98` on `baseflicks/feature/playback).
 
 **Developer report:** D1 reported Task 4 complete with changes limited to `ffmpeg.js`, new `media-probe.js`, and new `test/media-probe.test.js`; no dependencies or unrelated subsystems changed. D1 reported 23 new fixture-driven tests and full suite result of 89 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0. D1 also reported manual real-media checks for MP4, MKV, and a missing file.
 
@@ -61,6 +61,32 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 **PM result:** PASS / ACCEPTED after independent inspection of the actual commit, `media-probe.js`, `ffmpeg.js`, and Task 4 tests. Task 2 and Task 3 behavior remains outside the Task 4 diff and is covered by the full reported suite.
 
 **Merge:** PENDING. D1 remains on `feature/playback`; PM will merge only after all D1 tasks are completed and the final D1 review passes.
+
+## Task 5 — Client Capability Model
+
+**Status:** PASS / ACCEPTED
+
+**Developer implementation commit:** `f4aad4700696a847f1db8706249c71f709008a81` on `baseflicks/feature/playback`; authoritative PM branch tip inspected at `e808c1430e46dd4fd3cfadc12d7a97cc70f95eef` on `claude_baseflicks/feature/playback`.
+
+**Developer report:** D1 reported Task 5 complete with changes limited to new `client-capabilities.js` and `test/client-capabilities.test.js`; no server, FFmpeg, scanner, database, metadata, UI, or dependency changes. D1 reported 25 new tests and a full suite result of 114 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0. `main` was unchanged.
+
+**Work:** Added a normalized client capability model covering video codecs H.264/HEVC/VP8/VP9/AV1, audio codecs AAC/MP3/Opus/Vorbis/AC3/E-AC3/FLAC, containers MP4/WebM/MKV/MOV/AVI, and a resolution ceiling where known. Capabilities use conservative tri-state values (`supported`, `unsupported`, `unknown`) with alias canonicalization, partial-information handling, conflict handling, invalid-input tolerance, warnings, and frozen audit data.
+
+**Browser detection:** Added injectable `HTMLMediaElement.canPlayType()` detection plus an optional pre-gathered `MediaCapabilities.decodingInfo()` result hook and screen/DPR resolution ceiling. Browser APIs remain client-side; the server-facing model is a normalized plain object. Missing/uncertain browser information is not promoted to support.
+
+**Scope preservation:** No playback decision engine, Direct Play selection, Remux, Audio Transcode, Video Transcode, FFmpeg job, cache, scanner, database, metadata, or UI integration was added. The implementation explicitly leaves composition of container + codec + profile + level + resolution + audio to the later decision engine.
+
+**PM code validation:** PM independently inspected the actual GitHub `feature/playback` commit and both Task 5 source/test files. The commit comparison from the preceding PM documentation tip shows exactly two added files and no unrelated changes. The model exposes the required registries, tri-state normalization, alias handling, conflict handling, resolution validation, browser capability detection, and query API. The tests exercise the required categories and regression boundaries.
+
+**PM regression validation:** Task 4 media-probe codec names are covered by the Task 5 registry regression, and existing `ffmpeg.js` / `media-path.js` contracts are asserted. No `server.js` dependency is introduced by the capability module.
+
+**Test validation:** Developer reported 114 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0. PM inspected the actual 25-test Task 5 suite. No GitHub Actions/status check is attached to the Task 5 commit; local test evidence is therefore the recorded execution evidence.
+
+**Known limitations recorded:** The model is not yet wired into the live player or an HTTP endpoint; `MediaCapabilities.decodingInfo()` results are supplied by the browser-side caller rather than gathered inside the model; codec capabilities remain codec-name level and do not yet represent profile/level/bit-depth/HDR/channel thresholds; subtitles are outside this task. These are deferred by design and are not blockers for the foundation task.
+
+**PM result:** PASS / ACCEPTED. The implementation satisfies Task 5's foundation scope without prematurely implementing playback decisions.
+
+**Merge:** PENDING. No individual task is merged to `main`. D1 remains on `feature/playback` until all D1 tasks are complete and the final full-workstream review passes.
 
 ## Change Policy
 
