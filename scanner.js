@@ -744,6 +744,18 @@ function writeVideoMetadata(id, folder, metadata) {
 
     else {
 
+        // metadata.imagesOk => the TMDB /images call came back and
+        // its artwork set is authoritative, so write it straight
+        // through (clearing unused slots). Otherwise COALESCE and
+        // keep whatever's already stored. Mirrors writeMetadataToVideo
+        // in server.js.
+        const artworkAssign =
+            metadata.imagesOk
+                ? "backdrop = ?, landscape = ?, logo = ?"
+                : "backdrop = COALESCE(?, backdrop), " +
+                  "landscape = COALESCE(?, landscape), " +
+                  "logo = COALESCE(?, logo)";
+
         db.prepare(`
             UPDATE videos
             SET
@@ -756,9 +768,7 @@ function writeVideoMetadata(id, folder, metadata) {
                 studio = ?,
                 director = ?,
                 writers = ?,
-                backdrop = COALESCE(?, backdrop),
-                landscape = COALESCE(?, landscape),
-                logo = COALESCE(?, logo)
+                ${artworkAssign}
             WHERE id = ?
         `).run(
             metadata.title,

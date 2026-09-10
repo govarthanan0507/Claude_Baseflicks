@@ -569,6 +569,19 @@ function writeMetadataToVideo(id, folder, metadata) {
 
     else {
 
+        // When the TMDB images call succeeded, its backdrop/
+        // landscape/logo set is authoritative -- write it straight
+        // through so a now-unused slot (e.g. no second textless
+        // backdrop for the landscape) is actually cleared rather
+        // than left pointing at stale art. If the images call
+        // failed, fall back to COALESCE and keep what's stored.
+        const artworkAssign =
+            metadata.imagesOk
+                ? "backdrop = ?, landscape = ?, logo = ?"
+                : "backdrop = COALESCE(?, backdrop), " +
+                  "landscape = COALESCE(?, landscape), " +
+                  "logo = COALESCE(?, logo)";
+
         db.prepare(`
             UPDATE videos
             SET
@@ -581,9 +594,7 @@ function writeMetadataToVideo(id, folder, metadata) {
                 studio = ?,
                 director = ?,
                 writers = ?,
-                backdrop = COALESCE(?, backdrop),
-                landscape = COALESCE(?, landscape),
-                logo = COALESCE(?, logo)
+                ${artworkAssign}
             WHERE id = ?
         `).run(
             metadata.title,
@@ -1046,7 +1057,10 @@ app.post(
             if (episode) {
 
                 const seasonEpisode =
-                    poster.extractSeasonEpisode(row.name);
+                    poster.extractSeasonEpisode(
+                        row.name,
+                        poster.extractSeasonFromFolder(row.folder)
+                    );
 
                 if (!seasonEpisode) {
 
@@ -1116,63 +1130,11 @@ app.post(
             }
 
 
-            if (episode) {
-
-                db.prepare(`
-                    UPDATE videos
-                    SET
-                        custom_title = ?,
-                        overview = ?,
-                        custom_date = ?,
-                        genres = ?,
-                        poster = COALESCE(?, poster)
-                    WHERE id = ?
-                `).run(
-                    metadata.title,
-                    metadata.overview,
-                    metadata.date,
-                    metadata.genres,
-                    metadata.poster,
-                    id
-                );
-
-            }
-
-            else {
-
-                db.prepare(`
-                    UPDATE videos
-                    SET
-                        custom_title = ?,
-                        overview = ?,
-                        release_year = ?,
-                        genres = ?,
-                        poster = COALESCE(?, poster),
-                        tagline = ?,
-                        studio = ?,
-                        director = ?,
-                        writers = ?,
-                        backdrop = COALESCE(?, backdrop),
-                        landscape = COALESCE(?, landscape),
-                        logo = COALESCE(?, logo)
-                    WHERE id = ?
-                `).run(
-                    metadata.title,
-                    metadata.overview,
-                    metadata.year,
-                    metadata.genres,
-                    metadata.poster,
-                    metadata.tagline,
-                    metadata.studio,
-                    metadata.director,
-                    metadata.writers,
-                    metadata.backdrop,
-                    metadata.landscape,
-                    metadata.logo,
-                    id
-                );
-
-            }
+            // Same persistence the populate-from-web path uses --
+            // branches movie vs. episode and honours metadata.imagesOk
+            // so a re-identify replaces stale artwork instead of
+            // COALESCE-keeping it.
+            writeMetadataToVideo(id, row.folder, metadata);
 
 
             res.json({

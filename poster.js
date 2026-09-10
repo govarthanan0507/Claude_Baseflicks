@@ -539,12 +539,16 @@ async function fetchExtraMovieDetails(apiKey, movieId) {
 }
 
 
-async function downloadTmdbImage(imagePath, size, destDir, fileName) {
+async function downloadTmdbImage(imagePath, size, destDir, fileName, force) {
 
     const filePath =
         path.join(destDir, fileName);
 
-    if (fs.existsSync(filePath)) {
+    // Normally the on-disk copy wins (cheap re-scans), but an
+    // explicit re-fetch passes force so a better image choice --
+    // e.g. swapping a foreign title card for a clean plate --
+    // actually replaces the old file instead of being skipped.
+    if (fs.existsSync(filePath) && !force) {
 
         return filePath;
 
@@ -566,31 +570,34 @@ async function downloadTmdbImage(imagePath, size, destDir, fileName) {
 }
 
 
-// Order backdrops so the ones without text baked in come first,
-// then English-text ones, then everything else -- and within each
-// group, highest-voted first. TMDB's /images list is otherwise a
-// mix of every language (that's how a Portuguese "CENTRAL DE
-// INTELIGÊNCIA" title card ends up as backdrops[0]).
-function rankBackdrops(backdrops) {
+// TMDB tags an image's baked-in text with an ISO-639-1 code;
+// `null`, "" and "xx" all mean "no text". This mirrors Jellyfin's
+// TmdbUtils.AdjustImageLanguage, which folds "xx" into empty.
+function isTextlessImage(image) {
 
-    const languageRank = language => {
+    const language = image.iso_639_1;
 
-        if (language === null) return 0;
-        if (language === "en") return 1;
-        return 2;
+    return (
+        language === null ||
+        language === "" ||
+        language === "xx"
+    );
 
-    };
+}
 
-    return [...backdrops].sort((a, b) => {
+// Pick the backdrops to actually use, the way Jellyfin does it:
+// a TMDB backdrop that carries a language (i.e. has a title card
+// burned into it) is NOT treated as a backdrop at all -- Jellyfin
+// reclassifies those as "Thumb" images (see
+// TmdbClientManager.ConvertToRemoteImageInfo). Our details page
+// draws its own logo/title over the banner, so a textless plate is
+// exactly what it wants; a foreign-language title card (the
+// Portuguese "CENTRAL DE INTELIGÊNCIA" plate) must never win.
+// TMDB already returns the list roughly best-first (by vote), and
+// Jellyfin keeps that order, so we just filter -- no re-sorting.
+function selectBackdrops(backdrops) {
 
-        const byLanguage =
-            languageRank(a.iso_639_1) - languageRank(b.iso_639_1);
-
-        if (byLanguage !== 0) return byLanguage;
-
-        return (b.vote_average || 0) - (a.vote_average || 0);
-
-    });
+    return (backdrops || []).filter(isTextlessImage);
 
 }
 
@@ -600,7 +607,12 @@ async function fetchMovieImages(apiKey, movieId, safeName) {
     const result = {
         backdrop: null,
         landscape: null,
-        logo: null
+        logo: null,
+        // Whether the /images call actually came back. Callers use
+        // this to decide if they can treat these fields as the
+        // authoritative artwork set (and overwrite what's stored)
+        // or should leave existing artwork untouched on failure.
+        ok: false
     };
 
     try {
@@ -611,15 +623,19 @@ async function fetchMovieImages(apiKey, movieId, safeName) {
                 {
                     params: {
                         api_key: apiKey,
-                        // Pull the textless originals plus any
-                        // English ones; skip every other language.
+                        // Same shape Jellyfin's TmdbUtils
+                        // .GetImageLanguagesParam builds: the
+                        // textless originals ("null") plus English,
+                        // nothing else.
                         include_image_language: "en,null"
                     }
                 }
             );
 
+        result.ok = true;
+
         const backdrops =
-            rankBackdrops(response.data.backdrops || []);
+            selectBackdrops(response.data.backdrops);
 
         const logos =
             response.data.logos || [];
@@ -631,7 +647,8 @@ async function fetchMovieImages(apiKey, movieId, safeName) {
                 backdrops[0].file_path,
                 "w1280",
                 BACKDROP_DIR,
-                `${safeName}-${movieId}-backdrop.jpg`
+                `${safeName}-${movieId}-backdrop.jpg`,
+                true
             );
 
             result.backdrop =
@@ -647,7 +664,8 @@ async function fetchMovieImages(apiKey, movieId, safeName) {
                 backdrops[1].file_path,
                 "w1280",
                 LANDSCAPE_DIR,
-                `${safeName}-${movieId}-landscape.jpg`
+                `${safeName}-${movieId}-landscape.jpg`,
+                true
             );
 
             result.landscape =
@@ -655,9 +673,13 @@ async function fetchMovieImages(apiKey, movieId, safeName) {
 
         }
 
-        // Prefer a language-neutral (no text baked in) PNG logo.
+        // Logos are stylized title treatments, so -- like
+        // Jellyfin's OrderByLanguageDescending for an "en" library
+        // -- prefer the English one, then a textless one, then
+        // whatever ranks first.
         const bestLogo =
-            logos.find(logo => logo.iso_639_1 === null) ||
+            logos.find(logo => logo.iso_639_1 === "en") ||
+            logos.find(isTextlessImage) ||
             logos[0];
 
         if (bestLogo) {
@@ -671,7 +693,8 @@ async function fetchMovieImages(apiKey, movieId, safeName) {
                 bestLogo.file_path,
                 "w500",
                 LOGO_DIR,
-                `${safeName}-${movieId}-logo.${ext}`
+                `${safeName}-${movieId}-logo.${ext}`,
+                true
             );
 
             result.logo =
@@ -934,6 +957,7 @@ async function fetchFullMovieDetails(movieId, fileNameHint) {
             backdrop: images.backdrop,
             landscape: images.landscape,
             logo: images.logo,
+            imagesOk: images.ok,
             tagline: extraDetails.tagline,
             studio: extraDetails.studio,
             director: extraDetails.director,
