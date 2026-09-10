@@ -222,21 +222,162 @@ if (!fs.existsSync(NOT_COMPATIBLE_FOLDER)) {
 const MAX_TRANSCODE_HEIGHT = 1080;
 
 
+// Extension -> Content-Type for the containers Baseflicks serves
+// directly. Looked up case-insensitively so "Movie.MKV" still maps.
+// Anything not listed falls back to a generic binary type rather than
+// being mislabelled as video/mp4 (which breaks strict browsers).
+const MEDIA_CONTENT_TYPES = {
+    ".mp4": "video/mp4",
+    ".m4v": "video/x-m4v",
+    ".webm": "video/webm",
+    ".mkv": "video/x-matroska",
+    ".mov": "video/quicktime",
+    ".avi": "video/x-msvideo"
+};
+
+function mediaContentType(filePath) {
+
+    const ext =
+        path.extname(filePath).toLowerCase();
+
+    return MEDIA_CONTENT_TYPES[ext] || "application/octet-stream";
+
+}
+
+
 /*
-    Serve a complete, already-on-disk video file with full HTTP
-    range-request support (seeking). Used both for original files
-    that are already browser-compatible, and for files that have
-    already been transcoded once and cached to TRANSCODED_FOLDER --
-    from this function's point of view those two cases are
-    identical: a complete file that supports being read from an
-    arbitrary byte offset.
+    Classify one HTTP Range header against a known file size, per
+    RFC 7233. Baseflicks serves at most ONE range per response, so
+    this deliberately does not implement multipart/byteranges.
+
+    Returns exactly one of:
+      { kind: "full" }                -> caller: 200 + whole file
+      { kind: "unsatisfiable" }       -> caller: 416 + "bytes *&#47;<size>"
+      { kind: "partial", start, end } -> caller: 206 + [start..end],
+                                         both inclusive and already
+                                         clamped to 0 <= start <= end
+                                         <= size - 1 (no NaN, no
+                                         negative, no oversized offsets)
+
+    Classification -- first matching rule wins:
+       1. no header ................................... full
+       2. unit is not "bytes=" ....................... full  (unsupported unit)
+       3. more than one comma-separated spec ........ full  (multi-range)
+       4. spec is not "<digits>-<digits>" ........... full  (malformed)
+          (both sides empty also counts as malformed)
+       5. suffix form  "-N"  (final N bytes):
+            N == 0 .................................. unsatisfiable
+            size == 0 .............................. unsatisfiable
+            N >= size ............................. partial 0 .. size-1
+            otherwise ............................. partial size-N .. size-1
+       6. normal form  "S-"  or  "S-E":
+            E defaults to size-1 when absent
+            size == 0 .............................. unsatisfiable
+            S >= size ............................. unsatisfiable
+            E < S ................................. unsatisfiable
+            otherwise ............................. partial S .. min(E, size-1)
+*/
+function parseByteRange(rangeHeader, fileSize) {
+
+    if (typeof rangeHeader !== "string" || rangeHeader.length === 0) {
+        return { kind: "full" };
+    }
+
+    const unitMatch =
+        rangeHeader.trim().match(/^bytes=(.*)$/i);
+
+    if (!unitMatch) {
+        return { kind: "full" };
+    }
+
+    const specs =
+        unitMatch[1]
+            .split(",")
+            .map(spec => spec.trim())
+            .filter(spec => spec.length > 0);
+
+    if (specs.length !== 1) {
+        // Zero specs ("bytes=") or two-plus (multi-range) -> whole file.
+        return { kind: "full" };
+    }
+
+    const rangeMatch =
+        specs[0].match(/^(\d*)-(\d*)$/);
+
+    if (!rangeMatch) {
+        return { kind: "full" };
+    }
+
+    const startText = rangeMatch[1];
+    const endText = rangeMatch[2];
+
+    if (startText === "" && endText === "") {
+        return { kind: "full" };
+    }
+
+
+    // ---- suffix range: "bytes=-N" (the last N bytes) ----
+    if (startText === "") {
+
+        const suffixLength =
+            Number(endText);
+
+        if (suffixLength === 0 || fileSize === 0) {
+            return { kind: "unsatisfiable" };
+        }
+
+        if (suffixLength >= fileSize) {
+            return { kind: "partial", start: 0, end: fileSize - 1 };
+        }
+
+        return {
+            kind: "partial",
+            start: fileSize - suffixLength,
+            end: fileSize - 1
+        };
+
+    }
+
+
+    // ---- normal range: "bytes=S-" or "bytes=S-E" ----
+    const start =
+        Number(startText);
+
+    const end =
+        endText === ""
+            ? fileSize - 1
+            : Number(endText);
+
+    if (fileSize === 0 || start >= fileSize || end < start) {
+        return { kind: "unsatisfiable" };
+    }
+
+    return {
+        kind: "partial",
+        start: start,
+        end: Math.min(end, fileSize - 1)
+    };
+
+}
+
+
+/*
+    Serve a complete, already-on-disk video file with standards-
+    compliant single-range HTTP support (seeking). Used both for
+    original files that are already browser-compatible and for files
+    that have already been transcoded once and cached to
+    TRANSCODED_FOLDER -- from here those two cases are identical: a
+    complete file that can be read from an arbitrary byte offset.
+
+    Callers (the /video and /watch routes) resolve `filePath` through
+    the media-root containment guard first; this function never
+    re-derives a path from user input.
 */
 function serveDirectPlay(filePath, req, res) {
 
     // The callers verify existence first, but a file can still vanish
-    // (or become unreadable) between that check and this stat. Turn
-    // that into the normal not-found response rather than letting the
-    // exception surface as an uncontrolled 500.
+    // (or become unreadable) between that check and this stat -- keep
+    // that a controlled not-found rather than an uncontrolled 500.
     let stat;
 
     try {
@@ -249,79 +390,113 @@ function serveDirectPlay(filePath, req, res) {
             .send("Video not found");
     }
 
+    if (!stat.isFile()) {
+        return res
+            .status(404)
+            .send("Video not found");
+    }
+
     const fileSize =
         stat.size;
 
-    const range =
-        req.headers.range;
+    const contentType =
+        mediaContentType(filePath);
+
+    const parsed =
+        parseByteRange(req.headers.range, fileSize);
 
 
-    if (!range) {
+    // ---- 416: a valid but unsatisfiable single range ----
+    if (parsed.kind === "unsatisfiable") {
 
-        res.writeHead(200, {
-
-            "Content-Length":
-                fileSize,
-
-            "Content-Type":
-                "video/mp4",
-
-            // Advertise range support even on the initial full-file
-            // response, not just on an actual 206 -- otherwise a
-            // browser has no way to know seeking is supported until
-            // it happens to try a Range request first.
-            "Accept-Ranges":
-                "bytes"
-
+        res.writeHead(416, {
+            "Content-Range": `bytes */${fileSize}`,
+            "Accept-Ranges": "bytes",
+            "Content-Type": contentType,
+            "Content-Length": 0
         });
 
-        fs.createReadStream(filePath)
-            .pipe(res);
-
-        return;
+        return res.end();
 
     }
 
 
-    const parts =
-        range
-            .replace(/bytes=/, "")
-            .split("-");
+    const isPartial =
+        parsed.kind === "partial";
 
-    const start =
-        parseInt(parts[0], 10);
-
-    const end =
-        parts[1]
-            ? parseInt(parts[1], 10)
-            : fileSize - 1;
-
-    const chunkSize =
-        (end - start) + 1;
-
-    const file =
+    // By construction parsed guarantees 0 <= start <= end <= size-1,
+    // so these offsets can never make createReadStream throw a range
+    // error the way the old ad-hoc parser could.
+    const stream =
         fs.createReadStream(
             filePath,
-            { start, end }
+            isPartial
+                ? { start: parsed.start, end: parsed.end }
+                : {}
         );
 
-    res.writeHead(206, {
 
-        "Content-Range":
-            `bytes ${start}-${end}/${fileSize}`,
+    stream.once("error", (error) => {
 
-        "Accept-Ranges":
-            "bytes",
+        // Lost the file mid-flight. If nothing has been sent yet this
+        // is still a clean 404/500; once bytes are on the wire the
+        // only safe move is to tear the response down.
+        if (res.headersSent || res.writableEnded) {
+            res.destroy(error);
+            return;
+        }
 
-        "Content-Length":
-            chunkSize,
-
-        "Content-Type":
-            "video/mp4"
+        if (error && error.code === "ENOENT") {
+            res.status(404).send("Video not found");
+        }
+        else {
+            res.status(500).end();
+        }
 
     });
 
-    file.pipe(res);
+
+    // Release the file descriptor if the viewer seeks away or closes
+    // the tab before this chunk finishes -- routine while scrubbing.
+    res.on("close", () => {
+        stream.destroy();
+    });
+
+
+    stream.once("open", () => {
+
+        if (res.destroyed || res.writableEnded) {
+            stream.destroy();
+            return;
+        }
+
+        if (isPartial) {
+
+            res.writeHead(206, {
+                "Content-Range":
+                    `bytes ${parsed.start}-${parsed.end}/${fileSize}`,
+                "Accept-Ranges": "bytes",
+                "Content-Length": (parsed.end - parsed.start) + 1,
+                "Content-Type": contentType
+            });
+
+        }
+        else {
+
+            res.writeHead(200, {
+                "Content-Length": fileSize,
+                "Content-Type": contentType,
+                // Advertise range support on the full-file response
+                // too, so a browser knows seeking is available before
+                // it ever issues a Range request.
+                "Accept-Ranges": "bytes"
+            });
+
+        }
+
+        stream.pipe(res);
+
+    });
 
 }
 
