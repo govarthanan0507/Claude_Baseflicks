@@ -192,6 +192,28 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 
 **Merge:** PENDING until final D1 workstream review. `main` remains untouched.
 
+## Task 13 — Audio / Subtitle Handling
+
+**Status:** PASS / ACCEPTED
+
+**Authoritative commit:** `40599645d177fa83c1f0dfc6abe6841f3a515819` on `claude_baseflicks/feature/playback`.
+
+**Work:** Extended the normalized media probe with audio title/default disposition and subtitle title/default/forced/type metadata. Added safe audio/subtitle selection intake and resolution at the playback integration boundary without introducing a second decision engine. Explicitly selected non-first audio streams are preserved by absolute ffprobe index through Remux, Audio Transcode, and Video Transcode execution and cache identity. Subtitles remain conservative: no subtitle transcoding or passthrough was introduced; transformed outputs continue to use `-sn`. Future player-facing track information is surfaced through the existing playback boundary and diagnostic headers without changing `/api/videos`.
+
+**Scope validation:** PASS. Changes were confined to playback probing/integration, FFmpeg mapping, the three existing transformation executors, `server.js`, and focused playback tests. No scanner, library UI, player UI, DB/schema, dependency, cache redesign, concurrency redesign, auth, or `main` changes were introduced.
+
+**PM validation:** PM independently inspected the actual authoritative GitHub commit and source. Task 6 remains the sole decision authority; selected streams are resolved before the existing decision engine is rerun. Audio selection honors an explicit valid index, otherwise default disposition then first audio. Invalid/missing selection is handled conservatively. Direct Play remains unchanged because the browser can select tracks from the original file. Transform paths use validated absolute stream indexes instead of blindly assuming `0:a:0?`. FFmpeg continues to use argument arrays without a shell, and subtitles remain dropped from transformed outputs rather than being incorrectly transcoded.
+
+**Regression validation:** Existing playback hierarchy remains Direct Play → Remux → Audio Transcode → Video Transcode. Task 2 containment and Task 3 Range paths are reused. Focused tests cover single/multiple audio, missing language, default audio, no audio, subtitle metadata/selection including default and forced, selected non-first audio execution, hierarchy preservation, cache identity, shell safety, real FFmpeg output, Range, and containment.
+
+**Developer test result:** 320 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0. The clean run was repeated after removing an unrelated stale `node server.js` process that had been holding port 4000 and corrupting an intermediate test run.
+
+**Known limitations accepted:** Subtitle transcoding is intentionally not implemented; transformed outputs do not carry subtitles. Direct Play relies on the client/browser for subtitle and track presentation. No player UI was added in this task. CI remains absent on the feature branch, so local `npm test` is the recorded execution evidence.
+
+**PM result:** **PASS / ACCEPTED. No rework required.**
+
+**Merge:** PENDING until final D1 workstream review. `main` remains untouched.
+
 ## Change Policy
 
 For every subsequent playback task, append a new task section containing assignment, work performed, files changed, developer tests, commit SHA, status, developer report/rework history, and PM outcome. Never delete prior history.
