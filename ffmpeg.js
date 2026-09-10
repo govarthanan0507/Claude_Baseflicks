@@ -767,6 +767,149 @@ function audioTranscodeToFile(inputPath, outputPath, options) {
 }
 
 
+// video target codec -> ffmpeg encoder + extra args. Task 6's
+// VIDEO_TRANSCODE only ever asks for "h264" today; the map keeps the
+// wiring in one place. An unknown codec is rejected so the caller
+// falls back rather than the server guessing an encoder.
+const VIDEO_ENCODERS = {
+    h264: { encoder: "libx264",     args: ["-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p"] },
+    hevc: { encoder: "libx265",     args: ["-preset", "veryfast", "-crf", "28"] },
+    vp9:  { encoder: "libvpx-vp9",  args: ["-b:v", "0", "-crf", "32"] },
+    av1:  { encoder: "libsvtav1",   args: ["-preset", "8", "-crf", "35"] }
+};
+
+
+/*
+    FULL VIDEO TRANSCODE to a complete file on disk (Task 12).
+
+    Re-encode BOTH the primary video (to options.videoCodec) and the
+    primary audio (to options.audioCodec) into options.container
+    ("mp4" | "webm"). Same safety guarantees as the other executors:
+    spawn() argv array (no shell), <output>.tmp -> rename only on a
+    clean exit, .tmp removed on failure/kill, ffmpeg stderr tail kept
+    in the rejection.
+
+    Rejects if options.videoCodec / options.audioCodec are outside
+    the encoder maps -- the caller then falls back rather than the
+    server inventing an encoder.
+
+    options:
+      container       "mp4" (default) | "webm"
+      videoCodec      "h264" | "hevc" | "vp9" | "av1"
+      audioCodec      "aac" | "opus" | ... | null  (null -> drop audio)
+      onProcessStart  called with the spawned ChildProcess
+*/
+function videoTranscodeToFile(inputPath, outputPath, options) {
+
+    options = options || {};
+
+    return new Promise((resolve, reject) => {
+
+        const videoSpec = VIDEO_ENCODERS[options.videoCodec];
+
+        if (!videoSpec) {
+            return reject(new Error(
+                `videoTranscodeToFile: unsupported target video codec ` +
+                `'${options.videoCodec}'`
+            ));
+        }
+
+        let audioArgs;
+
+        if (options.audioCodec === null || options.audioCodec === undefined) {
+            audioArgs = ["-an"];
+        } else {
+            const audioSpec = AUDIO_ENCODERS[options.audioCodec];
+            if (!audioSpec) {
+                return reject(new Error(
+                    `videoTranscodeToFile: unsupported target audio codec ` +
+                    `'${options.audioCodec}'`
+                ));
+            }
+            audioArgs = ["-c:a", audioSpec.encoder]
+                .concat(audioSpec.bitrate ? ["-b:a", audioSpec.bitrate] : []);
+        }
+
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+
+        const muxArgs =
+            options.container === "webm"
+                ? ["-f", "webm"]
+                : ["-f", "mp4", "-movflags", "+faststart"];
+
+        const tempPath =
+            `${outputPath}.tmp`;
+
+        const ffmpeg =
+            spawn(
+                "ffmpeg",
+                [
+                    "-i", inputPath,
+
+                    "-map", "0:v:0?",
+                    "-map", "0:a:0?",
+
+                    "-c:v", videoSpec.encoder,
+                    ...videoSpec.args,
+
+                    ...audioArgs,
+
+                    "-sn",
+                    ...muxArgs,
+
+                    "-y",
+                    tempPath
+                ]
+            );
+
+        if (typeof options.onProcessStart === "function") {
+            options.onProcessStart(ffmpeg);
+        }
+
+        let stderrOutput = "";
+
+        ffmpeg.stderr.on("data", (chunk) => {
+            stderrOutput += chunk.toString();
+        });
+
+        ffmpeg.on("error", (error) => {
+            fs.unlink(tempPath, () => {});
+            reject(error);
+        });
+
+        ffmpeg.on("close", (code, signal) => {
+
+            if (code === 0 && !signal) {
+
+                fs.rename(tempPath, outputPath, (renameError) => {
+                    if (renameError) {
+                        fs.unlink(tempPath, () => {});
+                        return reject(renameError);
+                    }
+                    resolve({});
+                });
+
+            }
+            else {
+
+                fs.unlink(tempPath, () => {});
+
+                reject(
+                    new Error(
+                        `ffmpeg video transcode exited code=${code} signal=${signal}: ` +
+                        stderrOutput.slice(-400)
+                    )
+                );
+
+            }
+
+        });
+
+    });
+
+}
+
+
 /*
     Transcode a file to a browser-compatible H.264/AAC stream and
     pipe the output directly into a writable stream (e.g. an
@@ -1080,6 +1223,7 @@ module.exports = {
     transcodeToMp4File,
     remuxToFile,
     audioTranscodeToFile,
+    videoTranscodeToFile,
     generateThumbnail,
     getTranscodedRelativePath
 };
