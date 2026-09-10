@@ -28,9 +28,7 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 
 **PM decision:** PASS / ACCEPTED
 
-**Merge decision:** Accepted as playback workstream baseline.
-
-**Final merged commit:** Not separately recorded here.
+**Merge policy:** No task-level merge. D1 remains on `feature/playback` until all D1 tasks are complete and the final D1 review passes.
 
 ## Task 2 — Media-Root Containment
 
@@ -50,9 +48,7 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 
 **PM decision:** PASS / ACCEPTED
 
-**Merge decision:** Eligible for PM-controlled merge after normal branch/PR integration checks.
-
-**Final merged commit:** Not separately recorded here.
+**Merge policy:** No task-level merge. Remains on `feature/playback` pending final D1 completion and final PM merge review.
 
 ## Task 3 — Direct-Play HTTP Range Hardening
 
@@ -66,26 +62,48 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 
 **Developer rework commit:** `2c00656e341ec857ed6867ba9effc379f31b8848`
 
-**Scope validation:** PASS. Actual commit changes only `server.js` `parseByteRange()` handling and `test/direct-play-range.test.js` coverage for the identified comma/list edge case. No scanner, database, UI, FFmpeg architecture, dependency, or unrelated playback redesign was introduced.
+**Developer response:** D1 corrected `parseByteRange()` so any comma in the Range value is treated as safe full-file fallback and added tests for trailing, leading, double-comma, and mixed-junk list-shaped values. D1 reported the complete suite at 66 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0.
 
-**Code validation:** PASS. The actual `feature/playback` `server.js` now checks for any comma in the Range value before splitting/parsing and returns `{ kind: "full" }`. This prevents trailing, leading, double-comma, or mixed-junk list-shaped headers from becoming a 206. Single valid ranges remain parsed normally. The actual test file verifies full status, length, absence of `Content-Range`, and complete body bytes for the malformed/list-shaped cases.
+**Scope validation:** PASS. Actual rework changes were limited to `server.js` Range handling and `test/direct-play-range.test.js` coverage. No scanner, database, UI, FFmpeg architecture, dependency, or unrelated playback redesign was introduced.
 
-**Test validation:** PASS based on the developer's reported complete local suite: 66 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0. The added integration coverage includes `bytes=0-99,200-299`, `bytes=0-99,`, `bytes=,0-99`, `bytes=0-99,,`, `bytes=0-99 ,`, and `bytes=0-99,abc`.
+**Code validation:** PASS. PM independently inspected the actual `feature/playback` implementation. The corrected parser no longer collapses malformed list-shaped headers into a valid 206. Required single-range behavior remains intact.
 
-**Regression validation:** PASS. The corrected code preserves the required single-range behaviors (explicit, open-ended, suffix, oversized suffix, EOF clamping, and valid unsatisfiable ranges). Task 2 containment regressions remain covered. The rework does not modify `media-path.js` or the route containment logic.
+**Regression validation:** PASS. Task 2 containment remained intact and Task 3 range/MIME requirements remained covered.
 
-**Benchmark validation:** PASS for the Task 3 scope. The implementation safely refuses to manufacture a 206 for a list-shaped header because Baseflicks intentionally serves at most one range and does not emit multipart/byteranges. This meets the agreed direct-play HTTP reliability baseline for this scope.
+**Benchmark validation:** PASS for the Task 3 scope. The implementation safely avoids manufacturing multipart behavior and falls back to a complete response for list-shaped/malformed input.
 
-**CI validation:** No GitHub status checks are attached to the rework commit. This remains a repository/QA infrastructure limitation, not a Task 3 code failure. Local test evidence is recorded separately above.
+**CI validation:** No GitHub status checks are attached to the rework commit. Local test evidence is recorded above.
 
 **PM decision:** PASS / ACCEPTED.
 
-**Merge decision:** Task 3 is now eligible for PM-controlled merge to `main`, subject to reconciling the current branch divergence before merging. Developers must not merge it themselves.
+**Merge policy:** No task-level merge. Task 3 remains on `feature/playback` until all D1 tasks are completed and the final D1 review passes.
 
-**Final merged commit:** PENDING PM merge.
+## Task 4 — Structured Media Capability Probe Model
 
----
+**Developer code commit:** `d4089cba9efc30da6611ff6ec1066455ca73fd98` on `baseflicks/feature/playback`.
+
+**Authoritative branch tip inspected:** `f5049fd97f564658bcd3f26f684e967a803e9424` on `claude_baseflicks/feature/playback`, a cherry-pick of the same implementation content onto the PM documentation tip.
+
+**Developer response:** D1 reported Task 4 complete, stopped as instructed, and supplied the changed-file list, output contract, failure behavior, 23 focused tests, manual real-media checks, and full-suite result of 89 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0. D1 also confirmed no dependency changes and no `main` merge.
+
+**Scope validation:** PASS. The actual Task 4 implementation adds only `media-probe.js`, `test/media-probe.test.js`, and additive `probeRaw()` support/export in `ffmpeg.js`. No scanner, database, UI, metadata, auth, route, server, or dependency changes were introduced by this task.
+
+**Code validation:** PASS. PM independently inspected the actual GitHub implementation. `media-probe.js` provides a pure normalization layer plus filesystem/probe orchestration. The normalized model handles all video/audio/subtitle streams, preserves stream indexes, normalizes numeric values to Number/null, parses frame-rate rationals, supports language-tag fallbacks, classifies subtitle types, and returns stable `not_found` / `probe_failed` errors. The raw ffprobe document is kept behind the low-level `probeRaw()` boundary and is not exposed as the normalized application contract.
+
+**Preservation validation:** PASS. `checkPlayability()` remains present and unchanged in the inspected `ffmpeg.js`; Task 4 adds no Direct Play, Remux, Audio Transcode, or Video Transcode decision logic. Task 2 containment and Task 3 range/MIME behavior are not modified by the Task 4 diff.
+
+**Test validation:** PASS based on D1's reported complete local suite: 89 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0, including the 23 Task 4 tests. PM also inspected the actual fixture-driven Task 4 test file and confirmed coverage for single/multi-stream media, no-video media, index preservation, numeric normalization, frame-rate parsing, language fallbacks, malformed probe data, filesystem failures, injected probe failures, and regression contracts.
+
+**Manual validation:** Developer reported successful real-media checks for an MP4, an MKV, and a missing media path. These checks are recorded as developer evidence; the PM acceptance is based on the actual code/test inspection rather than the report alone.
+
+**CI validation:** No GitHub Actions/status check is attached to the Task 4 commit. This remains a repository/QA infrastructure limitation. Local test evidence is recorded separately above.
+
+**Known limitations recorded:** `probeRaw()` duplicates the existing ffprobe invocation rather than refactoring `probeFile()`; per-stream bitrate may be null when the container does not provide it; subtitle type classification is intentionally coarse; HDR/color/disposition metadata is deferred. These are consistent with Task 4 scope and are not blockers.
+
+**PM decision:** PASS / ACCEPTED.
+
+**Merge policy:** No task-level merge. Task 4 remains on `feature/playback`. PM will reconcile branch divergence and merge only after all D1 tasks are complete and the final full D1 review passes.
 
 ## PM Merge Policy
 
-Developers do not merge playback branches into `main` themselves. After each completed task, PM validates the actual GitHub diff, tests, scope, regressions, and benchmark requirements. Only after PASS does PM perform the merge into `main`.
+Developers do not merge playback branches into `main` themselves. PM validates each task on `feature/playback` and records the result here. **No individual D1 task is merged to `main`.** After all D1 tasks are completed, PM performs a final full-workstream review, reconciles branch divergence, and then performs the controlled merge to `main` if the complete D1 implementation passes.
