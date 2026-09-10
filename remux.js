@@ -53,6 +53,19 @@ function targetExtension(container) {
 }
 
 /*
+    Task 13: the absolute ffprobe index of the audio stream the user
+    picked, or null when no explicit selection was made. Only a
+    non-negative integer counts; anything else -> null so the cache
+    identity and the ffmpeg argv are byte-identical to the pre-Task-13
+    "first audio stream" behaviour.
+*/
+function normalizeAudioStreamIndex(value) {
+    return (typeof value === "number" && Number.isInteger(value) && value >= 0)
+        ? value
+        : null;
+}
+
+/*
     Deterministic cache identity: source relative_path + size +
     modification time + the "remux" mode + target container. The
     modification time is kept at FULL fs.Stats.mtimeMs precision (no
@@ -60,7 +73,13 @@ function targetExtension(container) {
     replacement with the same size still produces a different key and
     can never be served from the stale remux.
 */
-function remuxCacheKey(relativePath, size, mtimeMs, container) {
+function remuxCacheKey(relativePath, size, mtimeMs, container, audioStreamIndex) {
+
+    const selected = normalizeAudioStreamIndex(audioStreamIndex);
+
+    // The audio-selection segment is appended ONLY when a track was
+    // explicitly chosen, so an unselected remux keeps its historical key.
+    const audioSegment = selected === null ? "" : ("␟audio:" + selected);
 
     return crypto
         .createHash("sha1")
@@ -69,7 +88,8 @@ function remuxCacheKey(relativePath, size, mtimeMs, container) {
             String(size) + "␟" +
             String(mtimeMs) + "␟" +
             "remux" + "␟" +
-            targetExtension(container)
+            targetExtension(container) +
+            audioSegment
         )
         .digest("hex");
 }
@@ -83,7 +103,7 @@ function remuxCachePathFor(key, container) {
     Exposed so callers/tests can assert cache identity and reuse
     without launching a job.
 */
-function resolveRemuxTarget(sourcePath, relativePath, container) {
+function resolveRemuxTarget(sourcePath, relativePath, container, audioStreamIndex) {
 
     let stat;
     try {
@@ -96,7 +116,9 @@ function resolveRemuxTarget(sourcePath, relativePath, container) {
         return null;
     }
 
-    const key = remuxCacheKey(relativePath, stat.size, stat.mtimeMs, container);
+    const key = remuxCacheKey(
+        relativePath, stat.size, stat.mtimeMs, container, audioStreamIndex
+    );
 
     return {
         key: key,
@@ -134,6 +156,7 @@ async function ensureRemux(params, options) {
     const sourcePath = params.sourcePath;
     const relativePath = params.relativePath;
     const container = params.container === "webm" ? "webm" : "mp4";
+    const audioStreamIndex = normalizeAudioStreamIndex(params.audioStreamIndex);
     const signal = params.signal;
 
     const run =
@@ -142,7 +165,9 @@ async function ensureRemux(params, options) {
     const timeoutMs =
         typeof options.timeoutMs === "number" ? options.timeoutMs : REMUX_WAIT_TIMEOUT_MS;
 
-    const target = resolveRemuxTarget(sourcePath, relativePath, container);
+    const target = resolveRemuxTarget(
+        sourcePath, relativePath, container, audioStreamIndex
+    );
 
     if (!target) {
         return { ok: false, error: "source not readable" };
@@ -184,6 +209,7 @@ async function ensureRemux(params, options) {
                 // just one job per key, so the fixed .tmp name is safe.
                 await run(sourcePath, target.cachePath, {
                     container: container,
+                    audioStreamIndex: audioStreamIndex,
                     onProcessStart: (proc) => { entry.proc = proc; entry.killIfDoomed(); }
                 });
 

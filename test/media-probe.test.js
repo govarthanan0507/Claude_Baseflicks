@@ -123,7 +123,9 @@ test("normalizeProbe: single video + single audio", async (t) => {
             channels: 2,
             sampleRate: 48000,
             bitrate: 128000,
-            language: "eng"
+            language: "eng",
+            title: null,
+            default: false
         });
         assert.equal(typeof result.audio[0].sampleRate, "number");
     });

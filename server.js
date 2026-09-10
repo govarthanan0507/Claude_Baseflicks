@@ -3559,6 +3559,16 @@ app.get("/video/:filename", async (req, res) => {
     let playbackTarget = null;
     let playbackVideoCodec = null;
     let playbackAudioCodec = null;
+    // Task 13: the ABSOLUTE ffprobe index of the audio stream the
+    // request asked to play (null = no explicit selection -> the
+    // executors keep their historical "first audio stream" behaviour
+    // and byte-identical cache identity).
+    let playbackAudioStreamIndex = null;
+
+    // Task 13: an explicit ?audio=<n> / ?subtitle=<n|off> selection off
+    // the <video src> URL. Read without throwing; null-ish when absent.
+    const streamSelection =
+        playbackIntegration.readStreamSelection(req);
 
     try {
 
@@ -3568,7 +3578,8 @@ app.get("/video/:filename", async (req, res) => {
                 row: videoRow,
                 needsTranscode: needsTranscode,
                 clientCapabilities:
-                    playbackIntegration.readClientCapabilities(req)
+                    playbackIntegration.readClientCapabilities(req),
+                selection: streamSelection
             });
 
         playbackMode = resolved.mode;
@@ -3576,9 +3587,31 @@ app.get("/video/:filename", async (req, res) => {
         playbackTarget = resolved.target || null;
         playbackVideoCodec = resolved.videoCodec || null;
         playbackAudioCodec = resolved.audioCodec || null;
+        playbackAudioStreamIndex =
+            (typeof resolved.audioStreamIndex === "number")
+                ? resolved.audioStreamIndex
+                : null;
 
         if (playbackMode) {
             res.setHeader("X-Baseflix-Playback-Mode", playbackMode);
+        }
+
+        // Surface the applied audio / subtitle track so a future player
+        // UI can reflect what is actually playing. Diagnostic only --
+        // never a playback rule.
+        if (playbackAudioStreamIndex !== null) {
+            res.setHeader(
+                "X-Baseflix-Audio-Stream",
+                String(playbackAudioStreamIndex)
+            );
+        }
+        if (typeof resolved.subtitleStreamIndex === "number") {
+            res.setHeader(
+                "X-Baseflix-Subtitle-Stream",
+                String(resolved.subtitleStreamIndex)
+            );
+        } else if (streamSelection && streamSelection.subtitle === "off") {
+            res.setHeader("X-Baseflix-Subtitle-Stream", "off");
         }
 
     }
@@ -3626,6 +3659,7 @@ app.get("/video/:filename", async (req, res) => {
                     sourcePath: videoPath,
                     relativePath: filename,
                     container: playbackTarget,
+                    audioStreamIndex: playbackAudioStreamIndex,
                     signal: remuxAbort.signal
                 });
         }
@@ -3673,6 +3707,7 @@ app.get("/video/:filename", async (req, res) => {
                     relativePath: filename,
                     container: playbackTarget,
                     audioCodec: playbackAudioCodec,
+                    audioStreamIndex: playbackAudioStreamIndex,
                     signal: audioAbort.signal
                 });
         }
@@ -3723,6 +3758,7 @@ app.get("/video/:filename", async (req, res) => {
                     container: playbackTarget,
                     videoCodec: playbackVideoCodec,
                     audioCodec: playbackAudioCodec,
+                    audioStreamIndex: playbackAudioStreamIndex,
                     signal: videoAbort.signal
                 });
         }

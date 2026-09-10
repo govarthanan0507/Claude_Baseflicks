@@ -59,13 +59,32 @@ function targetExtension(container) {
 }
 
 /*
+    Task 13: absolute ffprobe index of the audio stream the user
+    picked, or null when there was no explicit selection. Only a
+    non-negative integer counts; anything else -> null so the cache
+    identity and the ffmpeg argv stay byte-identical to the
+    pre-Task-13 "first audio stream" behaviour.
+*/
+function normalizeAudioStreamIndex(value) {
+    return (typeof value === "number" && Number.isInteger(value) && value >= 0)
+        ? value
+        : null;
+}
+
+/*
     Deterministic cache identity: source relative_path + size + FULL
     fs.Stats.mtimeMs (no truncation) + the "video_transcode" mode +
     target container + target video codec + target audio codec.
     A same-size in-place source edit, or any change of target, yields
     a different key -- a stale transcode can never be served.
 */
-function videoTranscodeCacheKey(relativePath, size, mtimeMs, container, videoCodec, audioCodec) {
+function videoTranscodeCacheKey(relativePath, size, mtimeMs, container, videoCodec, audioCodec, audioStreamIndex) {
+
+    const selected = normalizeAudioStreamIndex(audioStreamIndex);
+
+    // Appended ONLY when a track was explicitly chosen, so an
+    // unselected video-transcode keeps its historical key.
+    const audioSegment = selected === null ? "" : ("␟audio:" + selected);
 
     return crypto
         .createHash("sha1")
@@ -76,7 +95,8 @@ function videoTranscodeCacheKey(relativePath, size, mtimeMs, container, videoCod
             "video_transcode" + "␟" +
             targetExtension(container) + "␟" +
             String(videoCodec) + "␟" +
-            String(audioCodec)
+            String(audioCodec) +
+            audioSegment
         )
         .digest("hex");
 }
@@ -90,7 +110,7 @@ function cachePathFor(key, container) {
     WOULD live. Exposed for cache-identity / reuse assertions without
     launching a job.
 */
-function resolveVideoTranscodeTarget(sourcePath, relativePath, container, videoCodec, audioCodec) {
+function resolveVideoTranscodeTarget(sourcePath, relativePath, container, videoCodec, audioCodec, audioStreamIndex) {
 
     let stat;
     try {
@@ -104,7 +124,7 @@ function resolveVideoTranscodeTarget(sourcePath, relativePath, container, videoC
     }
 
     const key = videoTranscodeCacheKey(
-        relativePath, stat.size, stat.mtimeMs, container, videoCodec, audioCodec
+        relativePath, stat.size, stat.mtimeMs, container, videoCodec, audioCodec, audioStreamIndex
     );
 
     return {
@@ -148,6 +168,7 @@ async function ensureVideoTranscode(params, options) {
     const videoCodec = params.videoCodec;
     const audioCodec =
         (params.audioCodec === null || params.audioCodec === undefined) ? null : params.audioCodec;
+    const audioStreamIndex = normalizeAudioStreamIndex(params.audioStreamIndex);
     const signal = params.signal;
 
     if (!SUPPORTED_VIDEO_CODECS.has(videoCodec)) {
@@ -164,7 +185,7 @@ async function ensureVideoTranscode(params, options) {
         typeof options.timeoutMs === "number" ? options.timeoutMs : WAIT_TIMEOUT_MS;
 
     const target = resolveVideoTranscodeTarget(
-        sourcePath, relativePath, container, videoCodec, audioCodec
+        sourcePath, relativePath, container, videoCodec, audioCodec, audioStreamIndex
     );
 
     if (!target) {
@@ -209,6 +230,7 @@ async function ensureVideoTranscode(params, options) {
                     container: container,
                     videoCodec: videoCodec,
                     audioCodec: audioCodec,
+                    audioStreamIndex: audioStreamIndex,
                     onProcessStart: (proc) => { entry.proc = proc; entry.killIfDoomed(); }
                 });
 

@@ -61,13 +61,32 @@ function targetExtension(container) {
 }
 
 /*
+    Task 13: absolute ffprobe index of the audio stream the user
+    picked, or null when there was no explicit selection. Only a
+    non-negative integer counts; anything else -> null so the cache
+    identity and the ffmpeg argv stay byte-identical to the
+    pre-Task-13 "first audio stream" behaviour.
+*/
+function normalizeAudioStreamIndex(value) {
+    return (typeof value === "number" && Number.isInteger(value) && value >= 0)
+        ? value
+        : null;
+}
+
+/*
     Deterministic cache identity: source relative_path + size + FULL
     fs.Stats.mtimeMs precision + the "audio_transcode" mode + target
     container + target audio codec. Changing the source (even a
     same-size in-place edit) or either target parameter yields a
     different key, so a stale result can never be served.
 */
-function audioTranscodeCacheKey(relativePath, size, mtimeMs, container, audioCodec) {
+function audioTranscodeCacheKey(relativePath, size, mtimeMs, container, audioCodec, audioStreamIndex) {
+
+    const selected = normalizeAudioStreamIndex(audioStreamIndex);
+
+    // Appended ONLY when a track was explicitly chosen, so an
+    // unselected audio-transcode keeps its historical key.
+    const audioSegment = selected === null ? "" : ("␟audio:" + selected);
 
     return crypto
         .createHash("sha1")
@@ -77,7 +96,8 @@ function audioTranscodeCacheKey(relativePath, size, mtimeMs, container, audioCod
             String(mtimeMs) + "␟" +
             "audio_transcode" + "␟" +
             targetExtension(container) + "␟" +
-            String(audioCodec)
+            String(audioCodec) +
+            audioSegment
         )
         .digest("hex");
 }
@@ -91,7 +111,7 @@ function cachePathFor(key, container) {
     audio codec WOULD live. Exposed for cache-identity / reuse
     assertions without launching a job.
 */
-function resolveAudioTranscodeTarget(sourcePath, relativePath, container, audioCodec) {
+function resolveAudioTranscodeTarget(sourcePath, relativePath, container, audioCodec, audioStreamIndex) {
 
     let stat;
     try {
@@ -105,7 +125,7 @@ function resolveAudioTranscodeTarget(sourcePath, relativePath, container, audioC
     }
 
     const key = audioTranscodeCacheKey(
-        relativePath, stat.size, stat.mtimeMs, container, audioCodec
+        relativePath, stat.size, stat.mtimeMs, container, audioCodec, audioStreamIndex
     );
 
     return {
@@ -148,6 +168,7 @@ async function ensureAudioTranscode(params, options) {
     const relativePath = params.relativePath;
     const container = params.container === "webm" ? "webm" : "mp4";
     const audioCodec = params.audioCodec;
+    const audioStreamIndex = normalizeAudioStreamIndex(params.audioStreamIndex);
     const signal = params.signal;
 
     if (!SUPPORTED_TARGET_CODECS.has(audioCodec)) {
@@ -160,7 +181,9 @@ async function ensureAudioTranscode(params, options) {
     const timeoutMs =
         typeof options.timeoutMs === "number" ? options.timeoutMs : WAIT_TIMEOUT_MS;
 
-    const target = resolveAudioTranscodeTarget(sourcePath, relativePath, container, audioCodec);
+    const target = resolveAudioTranscodeTarget(
+        sourcePath, relativePath, container, audioCodec, audioStreamIndex
+    );
 
     if (!target) {
         return { ok: false, error: "source not readable" };
@@ -204,6 +227,7 @@ async function ensureAudioTranscode(params, options) {
                 await run(sourcePath, target.cachePath, {
                     container: container,
                     audioCodec: audioCodec,
+                    audioStreamIndex: audioStreamIndex,
                     onProcessStart: (proc) => { entry.proc = proc; killIfDoomed(); }
                 });
 

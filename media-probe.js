@@ -132,12 +132,15 @@ function nonEmptyStringOrNull(value) {
 
 }
 
+function streamTags(stream) {
+    return (stream && stream.tags && typeof stream.tags === "object")
+        ? stream.tags
+        : {};
+}
+
 function streamLanguage(stream) {
 
-    const tags =
-        (stream && stream.tags && typeof stream.tags === "object")
-            ? stream.tags
-            : {};
+    const tags = streamTags(stream);
 
     return (
         nonEmptyStringOrNull(tags.language) ||
@@ -145,6 +148,33 @@ function streamLanguage(stream) {
         nonEmptyStringOrNull(tags.lang) ||
         null
     );
+
+}
+
+// The human-facing track name, if the muxer stored one.
+function streamTitle(stream) {
+
+    const tags = streamTags(stream);
+
+    return (
+        nonEmptyStringOrNull(tags.title) ||
+        nonEmptyStringOrNull(tags.TITLE) ||
+        nonEmptyStringOrNull(tags.handler_name) ||
+        null
+    );
+
+}
+
+// ffprobe -show_streams reports { disposition: { default: 0|1,
+// forced: 0|1, ... } }. Return a strict boolean; absent -> false.
+function streamDisposition(stream, key) {
+
+    const disposition =
+        (stream && stream.disposition && typeof stream.disposition === "object")
+            ? stream.disposition
+            : {};
+
+    return disposition[key] === 1 || disposition[key] === true;
 
 }
 
@@ -203,7 +233,9 @@ function mapAudioStream(stream) {
         channels: toIntOrNull(stream.channels),
         sampleRate: toIntOrNull(stream.sample_rate),
         bitrate: toIntOrNull(stream.bit_rate),
-        language: streamLanguage(stream)
+        language: streamLanguage(stream),
+        title: streamTitle(stream),
+        default: streamDisposition(stream, "default")
     };
 
 }
@@ -217,6 +249,9 @@ function mapSubtitleStream(stream) {
         index: toIntOrNull(stream.index),
         codec: codec,
         language: streamLanguage(stream),
+        title: streamTitle(stream),
+        default: streamDisposition(stream, "default"),
+        forced: streamDisposition(stream, "forced"),
         type: subtitleType(codec)
     };
 

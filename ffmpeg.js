@@ -529,6 +529,25 @@ function transcodeToMp4File(inputPath, outputPath, options) {
 }
 
 
+// The -map arguments for the primary video + the SELECTED audio
+// stream (Task 13). options.audioStreamIndex, when a non-negative
+// integer, is the ABSOLUTE ffprobe stream index of the audio track
+// the user picked -- so "0:<n>?" rather than blindly "0:a:0?". The
+// value is validated by the caller (playback-integration) and is
+// only ever an integer here, so this stays shell-safe.
+function primaryMapArgs(options) {
+
+    const idx = options && options.audioStreamIndex;
+
+    const audioMap =
+        (typeof idx === "number" && Number.isInteger(idx) && idx >= 0)
+            ? ("0:" + idx + "?")
+            : "0:a:0?";
+
+    return ["-map", "0:v:0?", "-map", audioMap];
+}
+
+
 /*
     STREAM-COPY REMUX to a complete file on disk (Task 9).
 
@@ -573,10 +592,9 @@ function remuxToFile(inputPath, outputPath, options) {
                 [
                     "-i", inputPath,
 
-                    // Primary video + primary audio, each optional so
-                    // a video-only or audio-only source still works.
-                    "-map", "0:v:0?",
-                    "-map", "0:a:0?",
+                    // Primary video + the selected audio stream, each
+                    // optional so a video-only / audio-only source works.
+                    ...primaryMapArgs(options),
 
                     "-c:v", "copy",
                     "-c:a", "copy",
@@ -704,8 +722,7 @@ function audioTranscodeToFile(inputPath, outputPath, options) {
                 [
                     "-i", inputPath,
 
-                    "-map", "0:v:0?",
-                    "-map", "0:a:0?",
+                    ...primaryMapArgs(options),
 
                     "-c:v", "copy",
                     "-c:a", spec.encoder,
@@ -846,8 +863,7 @@ function videoTranscodeToFile(inputPath, outputPath, options) {
                 [
                     "-i", inputPath,
 
-                    "-map", "0:v:0?",
-                    "-map", "0:a:0?",
+                    ...primaryMapArgs(options),
 
                     "-c:v", videoSpec.encoder,
                     ...videoSpec.args,
@@ -1224,6 +1240,7 @@ module.exports = {
     remuxToFile,
     audioTranscodeToFile,
     videoTranscodeToFile,
+    primaryMapArgs,
     generateThumbnail,
     getTranscodedRelativePath
 };

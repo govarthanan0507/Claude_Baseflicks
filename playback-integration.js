@@ -226,6 +226,120 @@ function stableCapabilityKey(clientCapabilities) {
     }
 }
 
+
+// ---- audio / subtitle track selection (Task 13) -------------
+
+/*
+    Pull a track selection off a request WITHOUT ever throwing. It is
+    read from the query string of a <video src> URL:
+      ?audio=<stream index>
+      ?subtitle=<stream index> | off | none | disabled
+    Anything missing / non-integer / out of shape -> null (meaning
+    "use the default"). subtitle "off" is a distinct, explicit value.
+
+    Returns { audio: <number|null>, subtitle: <number|"off"|null> }.
+*/
+function readStreamSelection(req) {
+
+    const query = (req && req.query && typeof req.query === "object") ? req.query : {};
+
+    const toIndex = (raw) => {
+        if (Array.isArray(raw)) raw = raw[0];
+        if (typeof raw !== "string" || raw.trim() === "") return null;
+        const n = Number(raw);
+        return (Number.isInteger(n) && n >= 0) ? n : null;
+    };
+
+    let subtitleRaw = query.subtitle;
+    if (Array.isArray(subtitleRaw)) subtitleRaw = subtitleRaw[0];
+
+    let subtitle = null;
+    if (typeof subtitleRaw === "string") {
+        const token = subtitleRaw.trim().toLowerCase();
+        if (token === "off" || token === "none" || token === "disabled") {
+            subtitle = "off";
+        } else {
+            subtitle = toIndex(subtitleRaw);
+        }
+    }
+
+    return { audio: toIndex(query.audio), subtitle: subtitle };
+}
+
+function hasExplicitSelection(selection) {
+    return !!selection && (
+        typeof selection.audio === "number" ||
+        selection.subtitle === "off" ||
+        typeof selection.subtitle === "number"
+    );
+}
+
+/*
+    Given a full probe (media-probe describeMedia() output) and a
+    selection, work out which streams the playback pipeline should
+    actually use. NEVER assumes audio:0 -- when nothing is selected it
+    honours the `default` disposition, then the first audio stream.
+    Subtitles stay OFF unless one is explicitly selected or a `forced`
+    subtitle exists (conservative).
+
+    Safe with: no audio, many audio, no subtitles, many subtitles,
+    missing language, and incomplete stream metadata.
+*/
+function resolveSelectedStreams(probe, selection) {
+
+    selection = selection || {};
+
+    const audioStreams =
+        (probe && Array.isArray(probe.audio)) ? probe.audio.filter(s => s && typeof s === "object") : [];
+    const subtitleStreams =
+        (probe && Array.isArray(probe.subtitles)) ? probe.subtitles.filter(s => s && typeof s === "object") : [];
+
+    // ---- audio ----
+    let audioStream = null;
+    let audioReason = "none";
+
+    if (audioStreams.length > 0) {
+        if (typeof selection.audio === "number") {
+            audioStream = audioStreams.find(s => s.index === selection.audio) || null;
+            audioReason = audioStream ? "selected" : "selected-missing";
+        }
+        if (!audioStream) {
+            audioStream =
+                audioStreams.find(s => s.default === true) ||
+                audioStreams[0];
+            audioReason = (audioReason === "selected-missing") ? "fallback-default" : "default";
+        }
+    }
+
+    // ---- subtitle ----
+    let subtitleStream = null;
+    let subtitleReason = "off";
+
+    if (selection.subtitle === "off") {
+        subtitleReason = "off";
+    } else if (subtitleStreams.length > 0) {
+        if (typeof selection.subtitle === "number") {
+            subtitleStream = subtitleStreams.find(s => s.index === selection.subtitle) || null;
+            // an invalid explicit index -> stay off (conservative)
+            subtitleReason = subtitleStream ? "selected" : "off";
+        } else {
+            subtitleStream = subtitleStreams.find(s => s.forced === true) || null;
+            subtitleReason = subtitleStream ? "forced" : "off";
+        }
+    }
+
+    return {
+        audioStream: audioStream,
+        audioStreamIndex: audioStream ? audioStream.index : null,
+        audioReason: audioReason,
+        subtitleStream: subtitleStream,
+        subtitleStreamIndex: subtitleStream ? subtitleStream.index : null,
+        subtitleReason: subtitleReason,
+        audioTracks: audioStreams,
+        subtitleTracks: subtitleStreams
+    };
+}
+
 /*
     Decide how the /video route should serve a file.
 
@@ -258,6 +372,81 @@ async function resolvePlaybackMode(params, options) {
     const row = params.row || null;
     const needsTranscode = params.needsTranscode === true;
     const clientCapabilities = params.clientCapabilities;
+    const selection = params.selection || null;
+
+    // ---- explicit audio / subtitle selection (Task 13) ----
+    // When the request asks for a specific track we need REAL per-stream
+    // information, so we take the full probe here and re-run the Task 6
+    // decision over a probe whose primary audio stream IS the selected
+    // one. Task 6 stays the sole decision authority -- it just sees the
+    // media as the user asked to play it. No selection -> unchanged.
+    if (hasExplicitSelection(selection)) {
+
+        // A viewing session issues many Range requests for the same
+        // URL; cache the resolved selection so ffprobe runs once. Keyed
+        // on file + mtime + capabilities + the exact selection.
+        let selMtime = 0;
+        try { selMtime = fs.statSync(filePath).mtimeMs; } catch (error) { selMtime = 0; }
+
+        const selKey =
+            "sel | " + filePath + " | " + selMtime + " | " +
+            stableCapabilityKey(clientCapabilities) + " | " +
+            JSON.stringify({ a: selection.audio, s: selection.subtitle });
+
+        const selCached = selMtime ? decisionCacheGet(selKey) : null;
+        if (selCached) {
+            return Object.assign({ cached: true }, selCached);
+        }
+
+        let probe;
+        try {
+            const describe =
+                typeof options.describe === "function" ? options.describe : describeMedia;
+            probe = await describe(filePath);
+        } catch (error) {
+            return { mode: null, basis: "fallback", error: error.message };
+        }
+
+        if (!probe || probe.ok !== true) {
+            // Cannot see the streams -> ignore the selection, fall back
+            // to the ordinary (lightweight) path below.
+        } else {
+
+            const chosen = resolveSelectedStreams(probe, selection);
+
+            // Re-order so decidePlayback's "primary audio" is the
+            // selected stream.
+            const orderedAudio = chosen.audioStream
+                ? [chosen.audioStream].concat(
+                    probe.audio.filter(s => s !== chosen.audioStream))
+                : (Array.isArray(probe.audio) ? probe.audio : []);
+
+            const view = Object.assign({}, probe, { audio: orderedAudio });
+            const full = decidePlayback(view, clientCapabilities);
+            const tp = transformParams(full);
+
+            const result = {
+                mode: full.mode,
+                basis: "full-probe",
+                target: tp.target,
+                videoCodec: tp.videoCodec,
+                audioCodec: tp.audioCodec,
+                audioStreamIndex: chosen.audioStreamIndex,
+                subtitleReason: chosen.subtitleReason,
+                subtitleStreamIndex: chosen.subtitleStreamIndex,
+                tracks: {
+                    audio: chosen.audioTracks,
+                    subtitles: chosen.subtitleTracks
+                }
+            };
+
+            if (selMtime) {
+                decisionCacheSet(selKey, result);
+            }
+
+            return result;
+        }
+    }
 
     let light;
     try {
@@ -267,7 +456,10 @@ async function resolvePlaybackMode(params, options) {
     }
 
     if (light.mode !== MODES.DIRECT_PLAY) {
-        return Object.assign({ mode: light.mode, basis: "lightweight" }, transformParams(light));
+        return Object.assign(
+            { mode: light.mode, basis: "lightweight", audioStreamIndex: null },
+            transformParams(light)
+        );
     }
 
     if (!needsTranscode) {
@@ -374,8 +566,21 @@ function summarizeProbe(probe) {
         video: Array.isArray(probe.video) ? probe.video.map(function (v) {
             return { index: v.index, codec: v.codec, width: v.width, height: v.height };
         }) : [],
+        // Enough for a future player UI to render an "Audio Track" /
+        // "Subtitle Track" / "Off" picker. Never the raw ffprobe shape.
         audio: Array.isArray(probe.audio) ? probe.audio.map(function (a) {
-            return { index: a.index, codec: a.codec, channels: a.channels, language: a.language };
+            return {
+                index: a.index, codec: a.codec, channels: a.channels,
+                sampleRate: a.sampleRate, bitrate: a.bitrate,
+                language: a.language, title: a.title, default: a.default === true
+            };
+        }) : [],
+        subtitles: Array.isArray(probe.subtitles) ? probe.subtitles.map(function (s) {
+            return {
+                index: s.index, codec: s.codec, language: s.language,
+                title: s.title, type: s.type,
+                default: s.default === true, forced: s.forced === true
+            };
         }) : []
     };
 }
@@ -384,6 +589,8 @@ function summarizeProbe(probe) {
 module.exports = {
     MODES: MODES,
     readClientCapabilities: readClientCapabilities,
+    readStreamSelection: readStreamSelection,
+    resolveSelectedStreams: resolveSelectedStreams,
     buildLightweightProbe: buildLightweightProbe,
     decideFromLibraryRow: decideFromLibraryRow,
     probeAndDecide: probeAndDecide,
