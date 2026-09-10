@@ -170,7 +170,7 @@ async function loadProfiles() {
 // SELECT PROFILE
 // ============================================================
 
-function selectProfile(
+async function selectProfile(
     profile
 ) {
 
@@ -178,6 +178,34 @@ function selectProfile(
         "Selected profile:",
         profile.name
     );
+
+
+    // The Admin profile is password-protected. On first-ever use
+    // there's no password yet, so prompt to CREATE one; afterwards
+    // prompt to log in. The verified password is stashed so the
+    // main app can use it as the admin key without re-prompting.
+    if (profile.name === "Admin") {
+
+        const unlocked =
+            await handleAdminLogin();
+
+        if (!unlocked) {
+
+            // Cancelled or failed -- don't enter the Admin profile.
+            return;
+
+        }
+
+    }
+
+    else {
+
+        // Switching to a non-admin profile clears any cached admin
+        // credential, so admin controls don't leak across a
+        // profile switch.
+        localStorage.removeItem("baseflix_admin_key");
+
+    }
 
 
     localStorage.setItem(
@@ -190,6 +218,171 @@ function selectProfile(
 
     window.location.href =
     `/index.html?profile=${profile.id}`;
+
+}
+
+
+// Returns true if the Admin profile is unlocked (password created
+// or correctly entered), false if the user cancelled or failed.
+async function handleAdminLogin() {
+
+    let passwordSet = false;
+
+    try {
+
+        const statusRes =
+            await fetch("/api/admin/status");
+
+        const status =
+            await statusRes.json();
+
+        passwordSet =
+            status.passwordSet;
+
+    }
+
+    catch (error) {
+
+        console.error(
+            "Could not check admin status:",
+            error
+        );
+
+        alert(
+            "Could not reach the server to check the admin password."
+        );
+
+        return false;
+
+    }
+
+
+    if (!passwordSet) {
+
+        // First-time setup -- create a password.
+        const newPassword =
+            prompt(
+                "Set an Admin password (at least 4 characters). " +
+                "You'll use this to manage your library."
+            );
+
+        if (!newPassword) {
+
+            return false;
+
+        }
+
+        if (newPassword.length < 4) {
+
+            alert("Password must be at least 4 characters.");
+
+            return false;
+
+        }
+
+        const confirmPassword =
+            prompt("Confirm the Admin password:");
+
+        if (confirmPassword !== newPassword) {
+
+            alert("Passwords didn't match. Try again.");
+
+            return false;
+
+        }
+
+
+        try {
+
+            const res =
+                await fetch(
+                    "/api/admin/set-password",
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ newPassword })
+                    }
+                );
+
+            const body =
+                await res.json();
+
+            if (!res.ok) {
+
+                alert(body.error || "Could not set password.");
+
+                return false;
+
+            }
+
+        }
+
+        catch (error) {
+
+            console.error("Could not set admin password:", error);
+
+            alert("Could not set the admin password.");
+
+            return false;
+
+        }
+
+
+        // Cache it so the app uses it as the admin key.
+        localStorage.setItem("baseflix_admin_key", newPassword);
+
+        return true;
+
+    }
+
+
+    // Password already set -- log in.
+    const password =
+        prompt("Enter the Admin password:");
+
+    if (!password) {
+
+        return false;
+
+    }
+
+
+    try {
+
+        const res =
+            await fetch(
+                "/api/admin/login",
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ password })
+                }
+            );
+
+        if (!res.ok) {
+
+            alert("Incorrect password.");
+
+            return false;
+
+        }
+
+    }
+
+    catch (error) {
+
+        console.error("Could not verify admin password:", error);
+
+        alert("Could not verify the password.");
+
+        return false;
+
+    }
+
+
+    localStorage.setItem("baseflix_admin_key", password);
+
+    return true;
 
 }
 
@@ -215,12 +408,22 @@ async function showProfileManagement() {
 
     // ========================================================
     // ADMIN KEY
+    // Reuse the cached admin password if the user has already
+    // logged into the Admin profile this session; only prompt if
+    // there isn't one yet.
     // ========================================================
 
-    const adminKey =
-        prompt(
-            "Enter Baseflix Admin Key:"
-        );
+    let adminKey =
+        localStorage.getItem("baseflix_admin_key");
+
+    if (!adminKey) {
+
+        adminKey =
+            prompt(
+                "Enter the Admin password:"
+            );
+
+    }
 
 
     if (!adminKey) {

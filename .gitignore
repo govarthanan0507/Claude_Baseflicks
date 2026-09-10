@@ -5,3 +5,10 @@ posters/
 *.db
 *.db-shm
 *.db-wal
+
+# Generated artwork / transcode output / archived originals
+backdrops/
+landscapes/
+logos/
+transcoded/
+not_compatible_originals/

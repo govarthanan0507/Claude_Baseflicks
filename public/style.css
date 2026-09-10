@@ -1,3 +1,12 @@
+:root {
+    /* Baseflix's own signature accent -- deliberately not
+       Netflix red or Jellyfin blue. Used for hover glows,
+       the progress bar, and the play affordance. */
+    --accent: #00d9a3;
+    --accent-glow: rgba(0, 217, 163, 0.45);
+}
+
+
 * {
     box-sizing: border-box;
 }
@@ -83,25 +92,78 @@ body {
 
 .video-card:hover {
 
-    transform: scale(1.04);
+    transform: translateY(-4px);
 
     box-shadow:
-        0 10px 30px
-        rgba(0, 0, 0, 0.5);
+        0 14px 32px
+        var(--accent-glow);
 
 }
 
 
+/* ============================================================
+   MEDIA AREA (poster image or fallback video-frame preview),
+   with a gradient scrim + hover-reveal play button.
+   ============================================================ */
+
+.video-media {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    background: #2a2a2a;
+}
+
 .video-preview {
     width: 100%;
-
-    aspect-ratio: 16 / 9;
-
+    height: 100%;
     object-fit: cover;
-
     display: block;
+    background-color: #2a2a2a;
+    background-size: cover;
+    background-position: center;
+}
 
-    background: #2a2a2a;
+.video-card-scrim {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        to top,
+        rgba(0, 0, 0, 0.55) 0%,
+        rgba(0, 0, 0, 0) 55%
+    );
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.video-card:hover .video-card-scrim {
+    opacity: 1;
+}
+
+.video-card-play {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 46px;
+    height: 46px;
+    margin: -23px 0 0 -23px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #0a0a0a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    padding-left: 3px; /* optically center the triangle glyph */
+    opacity: 0;
+    transform: scale(0.6);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    box-shadow: 0 6px 18px var(--accent-glow);
+}
+
+.video-card:hover .video-card-play {
+    opacity: 1;
+    transform: scale(1);
 }
 
 
@@ -220,3 +282,666 @@ body {
 
 }
 
+
+/* ============================================================
+   CONTINUE WATCHING PROGRESS BAR
+   ============================================================ */
+
+.video-progress {
+
+    height: 4px;
+
+    margin: 0 14px 12px;
+
+    background: rgba(255, 255, 255, 0.15);
+
+    border-radius: 2px;
+
+    overflow: hidden;
+
+}
+
+
+.video-progress-fill {
+
+    height: 100%;
+
+    background: var(--accent);
+
+}
+
+
+/* ============================================================
+   LIBRARY (TOP-LEVEL FOLDER TILES)
+   ============================================================ */
+
+.library-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 24px;
+}
+
+.library-card {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    border-radius: 10px;
+    overflow: hidden;
+    cursor: pointer;
+    background-color: #232323;
+    background-size: cover;
+    background-position: center;
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.library-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 14px 34px var(--accent-glow);
+}
+
+.library-card-scrim {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        to top,
+        rgba(0, 0, 0, 0.88) 0%,
+        rgba(0, 0, 0, 0.15) 55%,
+        rgba(0, 0, 0, 0) 100%
+    );
+}
+
+.library-card-title {
+    position: absolute;
+    left: 18px;
+    right: 18px;
+    bottom: 14px;
+    color: #fff;
+    font-size: 22px;
+    font-weight: 700;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+}
+
+
+/* ============================================================
+   BACK BUTTON (returning from a folder to the library grid)
+   ============================================================ */
+
+.back-button {
+    display: inline-block;
+    color: #b3b3b3;
+    text-decoration: none;
+    font-size: 15px;
+    margin: 4px 0 20px;
+}
+
+.back-button:hover {
+    color: #fff;
+}
+
+
+/* ============================================================
+   PENDING CLEANUP BANNER
+   ============================================================ */
+
+.cleanup-banner {
+    background: #1c1c1c;
+    border: 1px solid rgba(0, 217, 163, 0.35);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin-bottom: 32px;
+}
+
+.cleanup-banner h2 {
+    margin: 0 0 4px;
+    font-size: 20px;
+}
+
+.cleanup-banner-subtext {
+    margin: 0 0 16px;
+    color: #999;
+    font-size: 14px;
+}
+
+.cleanup-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.cleanup-row-name {
+    font-size: 15px;
+    margin-bottom: 4px;
+}
+
+.cleanup-row-sizes {
+    font-size: 13px;
+    color: #999;
+}
+
+.cleanup-row-actions {
+    display: flex;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.cleanup-keep-button,
+.cleanup-delete-button {
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    border: 1px solid transparent;
+}
+
+.cleanup-keep-button {
+    background: transparent;
+    border-color: #555;
+    color: #ccc;
+}
+
+.cleanup-keep-button:hover {
+    border-color: #fff;
+    color: #fff;
+}
+
+.cleanup-delete-button {
+    background: var(--accent);
+    color: #0a0a0a;
+    font-weight: 600;
+}
+
+.cleanup-delete-button:hover {
+    filter: brightness(1.1);
+}
+
+
+/* ============================================================
+   VIDEO LIST (episode-style listing, e.g. inside a season)
+   ============================================================ */
+
+.video-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.video-list-item {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 16px;
+    background: #1c1c1c;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.video-list-item:hover {
+    background: var(--card-hover, #2a2a2a);
+}
+
+.video-list-play {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #0a0a0a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    padding-left: 2px;
+}
+
+.video-list-thumbnail {
+    flex-shrink: 0;
+    width: 96px;
+    aspect-ratio: 16 / 9;
+    border-radius: 4px;
+    background-color: #2a2a2a;
+    background-size: cover;
+    background-position: center;
+}
+
+.video-list-info {
+    flex-grow: 1;
+    min-width: 0;
+}
+
+.video-list-title {
+    font-size: 15px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.video-list-meta {
+    font-size: 13px;
+    color: #999;
+    margin-top: 4px;
+}
+
+.video-list-info .video-progress {
+    margin: 8px 0 0;
+}
+
+
+/* ============================================================
+   METADATA EDITING (three-dot menu + edit modal)
+   ============================================================ */
+
+.metadata-menu-button {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: transparent;
+    border: none;
+    color: #999;
+    font-size: 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.metadata-menu-button:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
+
+.video-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0 14px;
+}
+
+.video-title-row .video-title {
+    padding: 14px 0;
+}
+
+.video-list-title-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.video-list-date {
+    flex-shrink: 0;
+    font-size: 13px;
+    color: #999;
+}
+
+.video-list-overview {
+    font-size: 13px;
+    color: #b3b3b3;
+    margin-top: 8px;
+    line-height: 1.5;
+}
+
+.metadata-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 20px;
+}
+
+.metadata-modal {
+    background: #1c1c1c;
+    border-radius: 10px;
+    padding: 24px;
+    width: 100%;
+    max-width: 480px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.metadata-modal h3 {
+    margin: 0 0 20px;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.metadata-modal label {
+    display: block;
+    font-size: 13px;
+    color: #999;
+    margin-bottom: 6px;
+}
+
+.metadata-modal input,
+.metadata-modal textarea {
+    width: 100%;
+    background: #101010;
+    border: 1px solid #333;
+    border-radius: 6px;
+    color: #eee;
+    font-size: 14px;
+    font-family: inherit;
+    padding: 10px 12px;
+    margin-bottom: 16px;
+    box-sizing: border-box;
+    resize: vertical;
+}
+
+.metadata-modal input:focus,
+.metadata-modal textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.metadata-modal-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 4px;
+}
+
+
+/* ============================================================
+   SETTINGS BUTTON + TMDB SETUP MODAL
+   ============================================================ */
+
+.settings-button {
+    background: transparent;
+    border: none;
+    color: #999;
+    font-size: 20px;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 50%;
+}
+
+.settings-button:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
+
+.populate-from-web-link {
+    background: transparent;
+    border: 1px solid #333;
+    color: var(--accent);
+    font-size: 13px;
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-bottom: 20px;
+}
+
+.populate-from-web-link:hover {
+    border-color: var(--accent);
+}
+
+.populate-from-web-link:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.tmdb-setup-explanation {
+    font-size: 14px;
+    color: #b3b3b3;
+    line-height: 1.5;
+    margin: 0 0 16px;
+}
+
+.tmdb-setup-steps {
+    font-size: 13px;
+    color: #ccc;
+    line-height: 1.8;
+    margin: 0 0 16px;
+    padding-left: 20px;
+}
+
+.tmdb-setup-feedback {
+    font-size: 13px;
+    margin: -8px 0 12px;
+    min-height: 18px;
+}
+
+.tmdb-setup-error {
+    color: #e24b4a;
+}
+
+.tmdb-setup-success {
+    color: var(--accent);
+}
+
+
+/* ============================================================
+   VIDEO DETAILS PAGE
+   ============================================================ */
+
+.details-page {
+    max-width: 1100px;
+}
+
+.details-backdrop {
+    position: relative;
+    height: 220px;
+    border-radius: 10px;
+    background-size: cover;
+    background-position: center 20%;
+    background-color: #1c1c1c;
+    overflow: hidden;
+    margin-bottom: 24px;
+}
+
+.details-backdrop-overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.5) 60%, rgba(0,0,0,0.75) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(2px);
+}
+
+.details-big-title {
+    font-size: 48px;
+    font-weight: 600;
+    letter-spacing: 4px;
+    color: #f0e6c8;
+    text-align: center;
+    margin: 0;
+    padding: 0 20px;
+}
+
+.details-logo-image {
+    max-width: 320px;
+    max-height: 120px;
+    object-fit: contain;
+}
+
+.details-poster-row {
+    display: flex;
+    gap: 28px;
+    align-items: flex-start;
+}
+
+.details-poster {
+    flex-shrink: 0;
+    width: 220px;
+    aspect-ratio: 2 / 3;
+    border-radius: 8px;
+    background-size: cover;
+    background-position: center;
+    background-color: #1c1c1c;
+}
+
+.details-info {
+    flex-grow: 1;
+    min-width: 0;
+}
+
+.details-title {
+    font-size: 26px;
+    font-weight: 500;
+    margin: 0 0 8px;
+}
+
+.details-meta-line {
+    font-size: 14px;
+    color: #b3b3b3;
+    margin-bottom: 16px;
+}
+
+.details-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.details-play-button {
+    background: var(--accent);
+    color: #0a0a0a;
+    border: none;
+    font-weight: 600;
+    font-size: 14px;
+    padding: 10px 22px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.details-play-button:hover {
+    filter: brightness(1.1);
+}
+
+.details-tech {
+    font-size: 13px;
+    color: #999;
+    line-height: 1.7;
+    margin-bottom: 18px;
+}
+
+.details-tagline {
+    font-size: 16px;
+    color: #ddd;
+    font-style: italic;
+    margin-bottom: 12px;
+}
+
+.details-overview {
+    font-size: 14px;
+    color: #ccc;
+    line-height: 1.6;
+    max-width: 700px;
+    margin-bottom: 20px;
+}
+
+.details-crew {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.details-crew-row {
+    font-size: 13px;
+    display: flex;
+    gap: 8px;
+}
+
+.details-crew-label {
+    color: #999;
+    min-width: 70px;
+    flex-shrink: 0;
+}
+
+.details-crew-value {
+    color: #ddd;
+}
+
+
+/* ============================================================
+   MANUAL TMDB SEARCH (in the edit-details modal)
+   ============================================================ */
+
+.tmdb-search-panel {
+    background: #101010;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 20px;
+}
+
+.tmdb-search-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.tmdb-search-row input {
+    flex-grow: 1;
+    margin-bottom: 0;
+}
+
+.tmdb-search-row button {
+    flex-shrink: 0;
+}
+
+.tmdb-results-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 10px;
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.tmdb-result-row {
+    display: flex;
+    gap: 12px;
+    padding: 8px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.tmdb-result-row:hover {
+    background: #1c1c1c;
+}
+
+.tmdb-result-thumb {
+    flex-shrink: 0;
+    width: 46px;
+    aspect-ratio: 2 / 3;
+    border-radius: 4px;
+    background-size: cover;
+    background-position: center;
+    background-color: #2a2a2a;
+}
+
+.tmdb-result-info {
+    min-width: 0;
+}
+
+.tmdb-result-title {
+    font-size: 14px;
+    color: #eee;
+    margin-bottom: 3px;
+}
+
+.tmdb-result-overview {
+    font-size: 12px;
+    color: #999;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.tmdb-no-results {
+    font-size: 13px;
+    color: #999;
+    padding: 8px;
+}
