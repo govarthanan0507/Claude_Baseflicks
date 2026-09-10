@@ -180,6 +180,32 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 
 **Merge decision:** **PENDING.** `main` remains untouched. PM will perform the final full-workstream review and controlled merge only after all D1 tasks are completed.
 
+## Task 13 — Audio / Subtitle Handling
+
+**Developer implementation commit:** `01dad1d1ede74326e5431ba72c5342a09efed1ad` on `baseflicks/feature/playback`.
+
+**Authoritative PM branch commit:** `40599645d177fa83c1f0dfc6abe6841f3a515819` on `claude_baseflicks/feature/playback`.
+
+**Scope validation:** PASS. The actual commit changes only playback probing/integration, FFmpeg mapping, the three existing transformation executors, `server.js`, and focused playback tests. No scanner, library UI, player UI, DB/schema, dependency, cache redesign, concurrency redesign, auth, or `main` changes were introduced.
+
+**Code validation:** PASS. PM independently inspected the actual GitHub source. The probe remains additive and preserves the existing normalized schema while adding audio title/default and subtitle title/default/forced/type metadata. `resolveSelectedStreams()` honors explicit audio stream selection, otherwise default audio disposition then first audio; it safely handles no audio and incomplete metadata. Explicit non-first audio selection is preserved as an absolute ffprobe stream index through the playback integration boundary and into Remux, Audio Transcode, and Video Transcode cache/execution paths. Task 6 remains the sole playback decision authority; selection changes the media view presented to the existing decision engine rather than creating a second decision system.
+
+**Subtitle validation:** PASS. Subtitle selection is surfaced conservatively, but no subtitle transcoding or passthrough was introduced. Transformed outputs continue to use `-sn`, preventing unsupported subtitle handling from corrupting the current playback paths. Direct Play continues to leave native track selection to the client/browser.
+
+**FFmpeg/security validation:** PASS. `primaryMapArgs()` accepts only non-negative integer stream indexes and produces fixed argument-array mappings such as `0:<n>?`; invalid values fall back to the historical mapping. FFmpeg continues to be invoked without a shell. Cache identity differs for explicitly selected audio streams, preventing cross-track transformed-artifact reuse.
+
+**Hierarchy/regression validation:** PASS. Direct Play → Remux → Audio Transcode → Video Transcode priority is unchanged. Task 2 containment and Task 3 Range serving remain reused rather than duplicated. The focused suite covers metadata, multi-track selection, hierarchy preservation, cache identity, shell safety, real FFmpeg selected-track output, Range, and containment.
+
+**Test validation:** Developer reported a clean `npm test`: 320 pass, 0 fail, 0 cancelled, 0 skipped, 0 todo, exit code 0. The Task 13 commit adds 45 focused tests over the Task 12 baseline of 275.
+
+**CI validation:** No GitHub Actions/status check is attached to the feature branch. Local `npm test` is the recorded execution evidence.
+
+**Known limitations accepted:** Subtitle transcoding is intentionally not implemented; transformed outputs drop subtitles. Direct Play relies on the client/browser for native track presentation. No player UI was added. The initial test rerun was affected by an unrelated stale `node server.js` process holding port 4000; after that process was cleared, the clean full suite passed 320/320.
+
+**PM decision:** **PASS / ACCEPTED. No rework required.**
+
+**Merge decision:** **PENDING.** `main` remains untouched. PM will perform the final full-workstream review and controlled merge only after Task 14 and Task 15 are completed.
+
 ## PM Merge Policy
 
 Developers do not merge playback branches into `main` themselves. PM validates each task on `feature/playback` and records the result here. **No individual D1 task is merged to `main`.** After all D1 tasks are completed, PM performs a final full-workstream review, reconciles branch divergence, and then performs the controlled merge to `main` if the complete D1 implementation passes.
