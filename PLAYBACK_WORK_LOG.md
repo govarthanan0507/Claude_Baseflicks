@@ -54,13 +54,13 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 
 **Developer report:** D1 reported Task 4 complete with changes limited to `ffmpeg.js`, new `media-probe.js`, and new `test/media-probe.test.js`; no dependencies or unrelated subsystems changed. D1 reported 23 new fixture-driven tests and full suite result of 89 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0. D1 also reported manual real-media checks for MP4, MKV, and a missing file.
 
-**Work:** Added an additive raw ffprobe boundary and a normalized media description layer. The normalized model captures container information and every video, audio, and subtitle stream; numeric fields are normalized to Number/null, frame-rate rationals are parsed, language tags have fallbacks, subtitle codecs receive coarse text/image classification, non-contiguous stream indexes are preserved, and audio-only media is valid with an empty video array. Filesystem/probe failures return stable `not_found` or `probe_failed` results.
+**Work:** Added an additive raw ffprobe boundary and a normalized media description layer. The normalized model captures container information and every video, audio, and subtitle stream; numeric fields are normalized to Number/null, frame-rate rationals are parsed, language tags have fallbacks, subtitle codecs receive coarse text/image classification, non-contiguous stream indexes are preserved, and audio-only media is valid with an empty video array. Filesystem/probe failures return stable `not_found` or `probe_failed` errors.
 
 **Scope preservation:** Existing `probeFile()` and `checkPlayability()` were preserved; no Direct Play/Remux/Transcode decision logic was added. `server.js`, `media-path.js`, scanner, database, UI, package dependencies, and metadata were not changed by Task 4.
 
 **PM result:** PASS / ACCEPTED after independent inspection of the actual commit, `media-probe.js`, `ffmpeg.js`, and Task 4 tests. Task 2 and Task 3 behavior remains outside the Task 4 diff and is covered by the full reported suite.
 
-**Merge:** PENDING. D1 remains on `feature/playback`; PM will merge only after all D1 tasks are completed and the final D1 review passes.
+**Merge:** PENDING. D1 remains on `feature/playback`; PM will merge only after all D1 tasks are completed and the final full-workstream review passes.
 
 ## Task 5 — Client Capability Model
 
@@ -72,7 +72,7 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 
 **Work:** Added a normalized client capability model covering video codecs H.264/HEVC/VP8/VP9/AV1, audio codecs AAC/MP3/Opus/Vorbis/AC3/E-AC3/FLAC, containers MP4/WebM/MKV/MOV/AVI, and a resolution ceiling where known. Capabilities use conservative tri-state values (`supported`, `unsupported`, `unknown`) with alias canonicalization, partial-information handling, conflict handling, invalid-input tolerance, warnings, and frozen audit data.
 
-**Browser detection:** Added injectable `HTMLMediaElement.canPlayType()` detection plus an optional pre-gathered `MediaCapabilities.decodingInfo()` result hook and screen/DPR resolution ceiling. Browser APIs remain client-side; the server-facing model is a normalized plain object. Missing/uncertain browser information is not promoted to support.
+**Browser detection:** Added injectable `HTMLMediaElement.canPlayType()` detection plus an optional pre-gathered `MediaCapabilities.decodingInfo()` result hook and screen/DPR resolution ceiling. Browser APIs remain client-side; the server-facing model is a normalized plain object. Missing/uncertain capability information is not promoted to support.
 
 **Scope preservation:** No playback decision engine, Direct Play selection, Remux, Audio Transcode, Video Transcode, FFmpeg job, cache, scanner, database, metadata, or UI integration was added. The implementation explicitly leaves composition of container + codec + profile + level + resolution + audio to the later decision engine.
 
@@ -82,11 +82,41 @@ Jellyfin/Plex-level user-visible playback capability, reliability, correctness, 
 
 **Test validation:** Developer reported 114 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0. PM inspected the actual 25-test Task 5 suite. No GitHub Actions/status check is attached to the Task 5 commit; local test evidence is therefore the recorded execution evidence.
 
-**Known limitations recorded:** The model is not yet wired into the live player or an HTTP endpoint; `MediaCapabilities.decodingInfo()` results are supplied by the browser-side caller rather than gathered inside the model; codec capabilities remain codec-name level and do not yet represent profile/level/bit-depth/HDR/channel thresholds; subtitles are outside this task. These are deferred by design and are not blockers for the foundation task.
+**Known limitations recorded:** The model is not yet wired into the live player or an HTTP endpoint; `MediaCapabilities.decodingInfo()` gathering remains the browser caller's responsibility; capability granularity is codec-name level and does not yet represent profile/level/bit-depth/HDR/channel constraints; subtitles are outside this task. These are deferred by design and are not blockers for Task 5.
 
 **PM result:** PASS / ACCEPTED. The implementation satisfies Task 5's foundation scope without prematurely implementing playback decisions.
 
 **Merge:** PENDING. No individual task is merged to `main`. D1 remains on `feature/playback` until all D1 tasks are complete and the final full-workstream review passes.
+
+## Task 6 — Capability-Based Playback Decision Engine
+
+**Status:** PASS / ACCEPTED
+
+**Developer implementation commit:** `e8d7629495d50b99ccec5c450acb8dc558e96596` on `baseflicks/feature/playback`; authoritative PM branch tip inspected at `4f1b3aa5a3cece3f57c788aa2f2a56b9856d7aa3` on `claude_baseflicks/feature/playback`.
+
+**Developer report:** D1 reported Task 6 complete with exactly two new files: `playback-decision.js` and `test/playback-decision.test.js`; no server, route, FFmpeg, transcode job, cache, scanner, database, metadata, UI, HTTP API, package, or dependency changes. Main remained unchanged. Developer reported 24 new Task 6 tests and a full suite of 138 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled, exit code 0.
+
+**Work:** Added a pure, deterministic playback decision engine consuming the Task 4 media-probe model and Task 5 normalized client capability model. The engine evaluates `direct_play -> remux -> audio_transcode -> video_transcode` in order and selects the first possible mode. It returns a frozen structured decision containing the selected mode, reason, source stream/container summary, client capability summary, per-mode feasibility/blockers, transcode targets, and warnings.
+
+**Conservative capability rule:** `unknown` is never promoted to `supported`. Direct Play, Remux, and Audio Transcode require explicit support for the relevant capability. H.264 with client H.264=`unknown` is therefore not Direct Play.
+
+**Media constraints:** Container is resolved from file extension first with ffprobe format fallback. Video codec and audio codec are canonicalized through the Task 5 model. Resolution limits and deterministic high-bit-depth/non-4:2:0 video checks can block stream copying. The engine recognizes audio-only and video-only media, reports stream counts, and warns when multiple streams exist while using the first stream as the primary decision input. Media/client malformed inputs degrade safely to the conservative Video Transcode fallback without throwing.
+
+**Remux/transcode targeting:** Remux selects a client-supported MP4/WebM target only when the target can carry the selected codecs without re-encoding. Audio Transcode preserves copyable video and chooses a supported target audio codec/container. Video Transcode remains the universal fallback target. No actual FFmpeg execution was introduced by this task.
+
+**PM code validation:** PASS. PM independently inspected the actual GitHub `feature/playback` implementation and Task 6 test file, including the complete decision flow, mode evaluation, normalization boundary, conservative unknown handling, container resolution, resolution/exotic-video checks, malformed-input handling, frozen output, and module exports. The actual Task 6 commit contains exactly the two requested added files and no unrelated application changes.
+
+**Regression validation:** PASS based on the reported 138-test full suite and inspection of the cumulative Task 2–6 tests. Task 2 containment, Task 3 range hardening, Task 4 probe contracts, and Task 5 capability contracts remain outside the Task 6 diff and are not overwritten. The Task 6 tests include an end-to-end probe/capability/decision contract check.
+
+**Architectural validation:** PASS. The decision engine is stateless and has no Express, HTTP, database, scanner, UI, or FFmpeg execution dependency. It is suitable for later server integration without forcing a rewrite of the existing architecture.
+
+**Benchmark validation:** PASS for the Task 6 decision-layer scope. The capability-based hierarchy is materially stronger than the previous codec-only decision approach and establishes the required Direct Play → Remux → Audio Transcode → Video Transcode foundation. This is an internal decision-layer improvement; live playback capability remains to be integrated and validated later.
+
+**Known limitations recorded:** Client capability granularity remains codec-name based; H.264/HEVC profile and level compatibility cannot yet be fully evaluated because those fields are not represented by the Task 4/5 contracts. Container/codec combination support is represented by a static remux compatibility table rather than per-client combination probing. Multi-stream selection is intentionally deferred; the first audio/video stream drives the current decision and counts/warnings are reported. CI is still not attached to the feature branch, so local test execution is the recorded test evidence.
+
+**PM decision:** **PASS / ACCEPTED.** No rework is required for Task 6 within its assigned scope.
+
+**Merge:** PENDING. No individual task is merged to `main`. D1 remains on `feature/playback` until the complete Playback workstream is finished and the final PM review passes.
 
 ## Change Policy
 
