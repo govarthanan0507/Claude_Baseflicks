@@ -254,21 +254,82 @@ async function searchTmdbTv(apiKey, query, year) {
 // Pulls a "S01E02"-style season/episode pair out of a filename.
 // Returns null if the filename doesn't look like an episode --
 // callers use that to fall back to movie search instead.
-function extractSeasonEpisode(name) {
+/*
+    Pull season/episode numbers straight out of a filename by
+    matching the specific episode-marker patterns directly --
+    rather than trying to "clean" the whole filename first. This
+    is deliberately robust to release-group junk, resolution tags,
+    etc., because it keys off the S##E## / #x## / EP## markers and
+    ignores everything around them (the approach Jellyfin uses).
 
-    const match =
-        name.match(/S(\d{1,2})E(\d{1,3})/i);
+    folderSeason (optional) supplies the season when the filename
+    itself only carries an episode number (the "EP02" case), e.g.
+    parsed from a "Season 1" parent folder.
+*/
+function extractSeasonEpisode(name, folderSeason) {
 
-    if (!match) {
+    // Pattern 1: S01E02 / S1E2 / s01.e02 / S01 E02 / S01-E02
+    const seasonEpisode =
+        name.match(/[Ss](\d{1,2})[\s._-]*[Ee](\d{1,3})/);
 
-        return null;
+    if (seasonEpisode) {
+
+        return {
+            season: parseInt(seasonEpisode[1], 10),
+            episode: parseInt(seasonEpisode[2], 10)
+        };
 
     }
 
-    return {
-        season: parseInt(match[1], 10),
-        episode: parseInt(match[2], 10)
-    };
+    // Pattern 2: 1x02 / 1-02 as a standalone token. Bounded by
+    // non-digits on both sides so it doesn't grab part of a
+    // longer number run (e.g. a "264x1" codec fragment): the
+    // season part is limited to 1-2 digits and must not be
+    // preceded by another digit.
+    const crossFormat =
+        name.match(/(?:^|[^\dA-Za-z])(\d{1,2})[x-](\d{1,3})(?:[^\d]|$)/);
+
+    if (crossFormat) {
+
+        return {
+            season: parseInt(crossFormat[1], 10),
+            episode: parseInt(crossFormat[2], 10)
+        };
+
+    }
+
+    // Pattern 3: EP02 / E02 with no season in the filename -- only
+    // usable if the folder told us the season.
+    const episodeOnly =
+        name.match(/[Ee][Pp]?[\s._-]*(\d{1,3})/);
+
+    if (episodeOnly && folderSeason != null) {
+
+        return {
+            season: folderSeason,
+            episode: parseInt(episodeOnly[1], 10)
+        };
+
+    }
+
+    return null;
+
+}
+
+// Pull a season number out of a "Season 1" / "S01" style folder
+// name, for the episode-only filename case above.
+function extractSeasonFromFolder(folder) {
+
+    const normalized =
+        (folder || "").replace(/\\/g, "/");
+
+    const lastSegment =
+        normalized.split("/").pop() || "";
+
+    const match =
+        lastSegment.match(/(?:season|s)[\s._-]*(\d{1,2})/i);
+
+    return match ? parseInt(match[1], 10) : null;
 
 }
 
@@ -308,7 +369,10 @@ async function resolveVideoMetadata(row) {
             getShowNameFromFolder(row.folder);
 
         const seasonEpisode =
-            extractSeasonEpisode(row.name);
+            extractSeasonEpisode(
+                row.name,
+                extractSeasonFromFolder(row.folder)
+            );
 
         if (!seasonEpisode) {
 
@@ -502,6 +566,35 @@ async function downloadTmdbImage(imagePath, size, destDir, fileName) {
 }
 
 
+// Order backdrops so the ones without text baked in come first,
+// then English-text ones, then everything else -- and within each
+// group, highest-voted first. TMDB's /images list is otherwise a
+// mix of every language (that's how a Portuguese "CENTRAL DE
+// INTELIGÊNCIA" title card ends up as backdrops[0]).
+function rankBackdrops(backdrops) {
+
+    const languageRank = language => {
+
+        if (language === null) return 0;
+        if (language === "en") return 1;
+        return 2;
+
+    };
+
+    return [...backdrops].sort((a, b) => {
+
+        const byLanguage =
+            languageRank(a.iso_639_1) - languageRank(b.iso_639_1);
+
+        if (byLanguage !== 0) return byLanguage;
+
+        return (b.vote_average || 0) - (a.vote_average || 0);
+
+    });
+
+}
+
+
 async function fetchMovieImages(apiKey, movieId, safeName) {
 
     const result = {
@@ -515,11 +608,18 @@ async function fetchMovieImages(apiKey, movieId, safeName) {
         const response =
             await axios.get(
                 `https://api.themoviedb.org/3/movie/${movieId}/images`,
-                { params: { api_key: apiKey } }
+                {
+                    params: {
+                        api_key: apiKey,
+                        // Pull the textless originals plus any
+                        // English ones; skip every other language.
+                        include_image_language: "en,null"
+                    }
+                }
             );
 
         const backdrops =
-            response.data.backdrops || [];
+            rankBackdrops(response.data.backdrops || []);
 
         const logos =
             response.data.logos || [];
@@ -1099,6 +1199,7 @@ module.exports = {
     searchTmdbShows,
     fetchFullEpisodeDetails,
     extractSeasonEpisode,
+    extractSeasonFromFolder,
     isEpisodeFolder,
     getShowNameFromFolder,
     resolveVideoMetadata,
