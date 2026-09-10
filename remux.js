@@ -54,9 +54,11 @@ function targetExtension(container) {
 
 /*
     Deterministic cache identity: source relative_path + size +
-    mtime (whole seconds) + the "remux" mode + target container.
-    Changing any of those -> a different file, so an in-place source
-    edit can never be served from a stale remux.
+    modification time + the "remux" mode + target container. The
+    modification time is kept at FULL fs.Stats.mtimeMs precision (no
+    second/whole-number truncation) so an in-place edit or a rapid
+    replacement with the same size still produces a different key and
+    can never be served from the stale remux.
 */
 function remuxCacheKey(relativePath, size, mtimeMs, container) {
 
@@ -65,7 +67,7 @@ function remuxCacheKey(relativePath, size, mtimeMs, container) {
         .update(
             String(relativePath) + "␟" +
             String(size) + "␟" +
-            String(Math.floor(mtimeMs / 1000)) + "␟" +
+            String(mtimeMs) + "␟" +
             "remux" + "␟" +
             targetExtension(container)
         )

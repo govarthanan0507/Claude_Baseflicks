@@ -48,9 +48,58 @@ test("remux cache identity is deterministic and container-specific", () => {
     const k2 = remux.remuxCacheKey("Movies/A.mkv", 1000, 5000, "mp4");
     const k3 = remux.remuxCacheKey("Movies/A.mkv", 1000, 5000, "webm");
     const k4 = remux.remuxCacheKey("Movies/A.mkv", 1001, 5000, "mp4");
+    const k5 = remux.remuxCacheKey("Movies/B.mkv", 1000, 5000, "mp4");
     assert.equal(k1, k2);
-    assert.notEqual(k1, k3);
-    assert.notEqual(k1, k4);
+    assert.notEqual(k1, k3, "target container is part of the identity");
+    assert.notEqual(k1, k4, "source size is part of the identity");
+    assert.notEqual(k1, k5, "relative path is part of the identity");
+});
+
+test("remux cache identity keeps FULL mtime precision (sub-second edits differ)", () => {
+    // Two source states, same path + same size, mtimes 1 ms apart:
+    // whole-second truncation would have collided; full mtimeMs must not.
+    const base = 1_694_412_345_000;
+    assert.notEqual(
+        remux.remuxCacheKey("Movies/A.mkv", 1000, base, "mp4"),
+        remux.remuxCacheKey("Movies/A.mkv", 1000, base + 1, "mp4")
+    );
+
+    // ... and within the same whole second, and at sub-millisecond
+    // (NTFS mtimeMs is fractional).
+    assert.notEqual(
+        remux.remuxCacheKey("Movies/A.mkv", 1000, base + 10, "mp4"),
+        remux.remuxCacheKey("Movies/A.mkv", 1000, base + 250, "mp4")
+    );
+    assert.notEqual(
+        remux.remuxCacheKey("Movies/A.mkv", 1000, base + 0.1, "mp4"),
+        remux.remuxCacheKey("Movies/A.mkv", 1000, base + 0.9, "mp4")
+    );
+
+    // exact same mtimeMs still collides (correct: identical source state)
+    assert.equal(
+        remux.remuxCacheKey("Movies/A.mkv", 1000, base + 42.5, "mp4"),
+        remux.remuxCacheKey("Movies/A.mkv", 1000, base + 42.5, "mp4")
+    );
+});
+
+test("remux: a same-size in-place source edit invalidates the cached remux", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bf-rx-edit-"));
+    const src = path.join(dir, "movie.mkv");
+
+    fs.writeFileSync(src, Buffer.alloc(4096, 1));
+    const keyBefore = remux.resolveRemuxTarget(src, "movie.mkv", "mp4").key;
+
+    // Rewrite with the SAME size but different content; nudge mtime so
+    // the change is observable even on coarse-granularity clocks.
+    await new Promise(r => setTimeout(r, 20));
+    fs.writeFileSync(src, Buffer.alloc(4096, 2));
+    const future = new Date(Date.now() + 1234);
+    fs.utimesSync(src, future, future);
+
+    const keyAfter = remux.resolveRemuxTarget(src, "movie.mkv", "mp4").key;
+    assert.notEqual(keyBefore, keyAfter, "edited source must not reuse the old remux");
+
+    fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test("remux output lives in its own directory, never the transcode dir", () => {
