@@ -527,6 +527,100 @@ function createVideoCard(video, progressPercent) {
 
 
 // ============================================================
+// PLAYBACK CAPABILITY DETECTION (Task 16)
+// ============================================================
+//
+// Reports what THIS browser can decode to the server's existing
+// decision engine (client-capabilities.js -> playback-decision.js)
+// instead of leaving it to assume an unknown client. The browser
+// only ever REPORTS capabilities -- it never decides Direct Play /
+// Remux / Transcode itself; that stays entirely server-side.
+//
+// /client-capabilities.js is the EXACT SAME module server.js
+// requires -- loaded lazily (most page views never open a player)
+// and only once per session.
+
+let capabilityDetectorPromise = null;
+
+function loadCapabilityDetector() {
+
+    if (capabilityDetectorPromise) {
+
+        return capabilityDetectorPromise;
+
+    }
+
+    capabilityDetectorPromise = new Promise((resolve) => {
+
+        if (window.BaseflixClientCapabilities) {
+
+            resolve(window.BaseflixClientCapabilities);
+            return;
+
+        }
+
+        const script =
+            document.createElement("script");
+
+        script.src = "/client-capabilities.js";
+        script.async = true;
+
+        script.onload = () =>
+            resolve(window.BaseflixClientCapabilities || null);
+
+        script.onerror = () =>
+            resolve(null);
+
+        document.head.appendChild(script);
+
+    });
+
+    return capabilityDetectorPromise;
+
+}
+
+// -> "" | "?caps=..." to append to a /video request. Never throws --
+// a missing/broken detector (old browser, blocked script, detection
+// error) must fall back to "" and let playback proceed exactly as it
+// did before this feature existed, never block or crash it.
+async function detectPlaybackCapabilities(videoElement) {
+
+    try {
+
+        const lib = await loadCapabilityDetector();
+
+        if (!lib || typeof lib.detectBrowserCapabilities !== "function") {
+
+            return "";
+
+        }
+
+        const report =
+            lib.detectBrowserCapabilities({
+                videoElement: videoElement,
+                screen: window.screen,
+                devicePixelRatio: window.devicePixelRatio
+            });
+
+        return typeof lib.toQueryString === "function"
+            ? lib.toQueryString(report)
+            : "";
+
+    } catch (error) {
+
+        console.warn(
+            "Baseflix: capability detection failed, playing without it:",
+            error
+        );
+
+        return "";
+
+    }
+
+}
+
+
+// ============================================================
 // OPEN FULLSCREEN PLAYER
 // ============================================================
 
@@ -572,11 +666,25 @@ async function openPlayer(video) {
         );
 
 
+    // Task 16: report this browser's playback capabilities so the
+    // server's decision engine can pick Direct Play / Remux / Audio
+    // Transcode / Video Transcode instead of assuming an unknown
+    // client. A <video src="..."> element cannot set a custom HTTP
+    // header, so this uses the query-string arm playback-integration.js
+    // already accepts (?caps=) -- the same intake, normalization and
+    // decision path as the header form. Resolves to "" (no query
+    // string added) when detection is unavailable or fails; Task 14's
+    // no-capability Direct Play fast-path then applies exactly as
+    // before this feature existed.
+    const capabilitiesQuery =
+        await detectPlaybackCapabilities(player);
+
     player.src =
         "/video/" +
         encodeURIComponent(
             video.relative_path
-        );
+        ) +
+        capabilitiesQuery;
 
 
     player.controls = true;

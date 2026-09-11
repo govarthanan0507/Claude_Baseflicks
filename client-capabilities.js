@@ -593,6 +593,87 @@
     }
 
 
+    // ---- browser -> server transport (Task 16) ------------------
+    //
+    // detectBrowserCapabilities() reports every registry key, most of
+    // them "unknown" (canPlayType only ever affirms or denies a
+    // handful of formats). normalizeClientCapabilities() already
+    // treats an ABSENT key exactly like an explicit "unknown" one --
+    // so a report can be shrunk to just its "supported"/"unsupported"
+    // entries with zero loss of information. That is the only
+    // encoding this file hands to the network layer; Baseflicks
+    // targets modest home hardware, so the request URL stays small
+    // instead of carrying a full tri-state map plus warnings/raw.
+
+    // report -> the smallest object that normalizes identically to
+    // the full report, or null when there is nothing worth sending
+    // (every axis unknown, or the input itself is unusable).
+    function compactForTransport(report) {
+
+        if (!isPlainObject(report)) {
+            return null;
+        }
+
+        const compact = {};
+
+        KINDS.forEach(function (kind) {
+
+            const section = report[kind];
+
+            if (!isPlainObject(section)) {
+                return;
+            }
+
+            const kept = {};
+            let any = false;
+
+            Object.keys(section).forEach(function (key) {
+
+                const state = section[key];
+
+                if (state === STATES.SUPPORTED || state === STATES.UNSUPPORTED) {
+                    kept[key] = state;
+                    any = true;
+                }
+                // STATES.UNKNOWN (or anything unrecognised) is
+                // omitted -- normalizeClientCapabilities() treats a
+                // missing key as unknown already.
+            });
+
+            if (any) {
+                compact[kind] = kept;
+            }
+        });
+
+        if (isPlainObject(report.maxResolution) &&
+            typeof report.maxResolution.width === "number" &&
+            typeof report.maxResolution.height === "number") {
+            compact.maxResolution = report.maxResolution;
+        }
+
+        return Object.keys(compact).length > 0 ? compact : null;
+    }
+
+    // report -> "" | "?caps=<url-encoded compact JSON>", ready to
+    // append to a /video request. Pure string logic (no DOM, no
+    // fetch) so both the browser and a Node test can call it
+    // directly. Never throws -- an unencodable report just yields "".
+    function toQueryString(report) {
+
+        const compact = compactForTransport(report);
+
+        if (!compact) {
+            return "";
+        }
+
+        try {
+            return "?caps=" + encodeURIComponent(JSON.stringify(compact));
+        } catch (e) {
+            return "";
+        }
+    }
+
+
     return {
         STATES: STATES,
         REGISTRY: REGISTRY,
@@ -603,6 +684,8 @@
         defaultCapabilities: defaultCapabilities,
         detectFromCanPlayType: detectFromCanPlayType,
         detectBrowserCapabilities: detectBrowserCapabilities,
-        describeBrowserClient: describeBrowserClient
+        describeBrowserClient: describeBrowserClient,
+        compactForTransport: compactForTransport,
+        toQueryString: toQueryString
     };
 });

@@ -175,6 +175,27 @@ app.use(
 );
 
 
+// ============================================================
+// BROWSER CAPABILITY DETECTOR (Task 16)
+// Serves the EXACT SAME client-capabilities.js module the server
+// requires above -- one implementation, no second browser-side copy.
+// The player loads this before requesting /video and calls
+// detectBrowserCapabilities() + toQueryString() from it (see
+// public/app.js); the server never runs its browser-detection
+// branch itself.
+// ============================================================
+
+app.get("/client-capabilities.js", (req, res) => {
+
+    res.type("application/javascript");
+
+    res.sendFile(
+        path.join(__dirname, "client-capabilities.js")
+    );
+
+});
+
+
 const PORT = 4000;
 
 
